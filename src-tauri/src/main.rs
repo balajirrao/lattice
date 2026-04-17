@@ -124,6 +124,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             vault: Mutex::new(initial_vault),
         })
@@ -143,7 +145,7 @@ fn main() {
         ])
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_title("lattice");
+                let _ = w.set_title("Lattice");
             }
             Ok(())
         })

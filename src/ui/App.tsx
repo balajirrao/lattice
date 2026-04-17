@@ -13,6 +13,7 @@ import { Outliner, useCollapse } from "./Outliner";
 import { VaultPicker } from "./VaultPicker";
 import { SearchModal } from "./SearchModal";
 import { CommandPalette } from "./CommandPalette";
+import { useAutoUpdate } from "./useAutoUpdate";
 import * as api from "./api";
 import {
   type Workflow,
@@ -55,6 +56,7 @@ export function App() {
   const [showProperties, setShowProperties] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [backlinks, setBacklinks] = useState<string[]>([]);
+  const updater = useAutoUpdate();
 
   const skipAutosaveRef = useRef(false);
 
@@ -279,6 +281,8 @@ export function App() {
         />
       )}
       {statusMessage && <div className="status-toast">{statusMessage}</div>}
+      <UpdateBanner updater={updater} />
+
 
       <aside className="sidebar">
         <div className="sidebar-top">
@@ -413,6 +417,35 @@ export function App() {
       </main>
     </div>
   );
+}
+
+function UpdateBanner({ updater }: { updater: ReturnType<typeof useAutoUpdate> }) {
+  const { status, install, dismiss } = updater;
+  if (status.kind === "idle") return null;
+  const body = (() => {
+    switch (status.kind) {
+      case "available":
+        return (
+          <>
+            <span>Update available: v{status.update.version}</span>
+            <button onClick={install}>Install</button>
+            <button onClick={dismiss}>Later</button>
+          </>
+        );
+      case "downloading":
+        return <span>Downloading update…</span>;
+      case "ready":
+        return <span>Update installed — relaunching…</span>;
+      case "error":
+        return (
+          <>
+            <span>Update failed: {status.error}</span>
+            <button onClick={dismiss}>Dismiss</button>
+          </>
+        );
+    }
+  })();
+  return <div className="update-banner">{body}</div>;
 }
 
 function NoteSection({
