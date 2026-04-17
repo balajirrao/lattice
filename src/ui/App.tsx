@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type Block,
   isWeeklyTitle,
@@ -219,6 +220,11 @@ export function App() {
     const t = setTimeout(() => setStatusMessage(null), 3500);
     return () => clearTimeout(t);
   }, [statusMessage]);
+
+  useEffect(() => {
+    const title = currentTitle ? `Lattice — ${currentTitle}` : "Lattice";
+    void getCurrentWindow().setTitle(title);
+  }, [currentTitle]);
 
   const startNewWeek = useCallback(() => {
     const w = workflows.find((x) => x.id === "start-new-week");

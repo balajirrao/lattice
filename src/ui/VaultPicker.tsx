@@ -30,7 +30,7 @@ export function VaultPicker({ recentVaults, onVaultSelected }: Props) {
   return (
     <div className="vault-picker">
       <div className="vault-picker-card">
-        <h1>lattice</h1>
+        <h1>Lattice</h1>
         <p>Choose a folder to store your notes (markdown files).</p>
         <button className="btn-primary" onClick={browsePicker}>
           Browse…
