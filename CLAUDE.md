@@ -111,6 +111,7 @@ Notes are stored as nested bullet lists with **no space** between the dash and t
 | `↑` / `↓` | Move focus between blocks (respects collapsed state) |
 | `⌘Enter` (or `Ctrl+Enter`) | Cycle TODO → DOING → DONE → null |
 | `⌘K` | Open search modal |
+| `⌘F` | Find in current note (Enter / Shift+Enter = next/prev match, Esc = close) |
 
 ## Testing
 

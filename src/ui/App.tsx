@@ -76,7 +76,7 @@ export function App() {
   const [currentTitle, setCurrentTitle] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const { collapsedIds, toggleCollapse } = useCollapse();
+  const { collapsedIds, toggleCollapse, expandIds } = useCollapse();
 
   const [newTitle, setNewTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -546,6 +546,7 @@ export function App() {
               onOpenLink={createOrOpen}
               collapsedIds={collapsedIds}
               toggleCollapse={toggleCollapse}
+              expandIds={expandIds}
               showProperties={showProperties}
               todayBlockId={todayId}
             />
@@ -612,7 +613,7 @@ function NoteSection({
   onOpen: (t: string) => void;
   displayName: (t: string) => string;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   return (
     <section className="note-section">
       <button className="section-header" onClick={() => setCollapsed((c) => !c)}>

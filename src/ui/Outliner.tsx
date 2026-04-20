@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type Block,
   type Properties,
   type TodoState,
+  ancestorIdsOf,
   cycleFamily,
   cycleState,
   indent,
@@ -23,7 +24,7 @@ import {
   updateText,
 } from "../core";
 
-export type CollapsedIds = Set<string>;
+export type CollapsedIds = { has(id: string): boolean };
 
 type OutlinerProps = {
   blocks: Block[];
@@ -33,9 +34,16 @@ type OutlinerProps = {
   onOpenLink: (title: string) => void;
   collapsedIds: CollapsedIds;
   toggleCollapse: (id: string) => void;
+  expandIds: (ids: string[]) => void;
   showProperties: boolean;
   /** Block to visually mark as "today" (e.g. Monday block in this week's note). */
   todayBlockId?: string | null;
+};
+
+type SearchContext = {
+  query: string;
+  matchSet: Set<string>;
+  currentId: string | null;
 };
 
 /** Flatten blocks in visual order, skipping children of collapsed blocks. */
@@ -70,7 +78,71 @@ export function Outliner(props: OutlinerProps) {
   const suppressClickRef = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const { blocks, collapsedIds, focusedId, setBlocks, setFocusedId } = props;
+  const { blocks, collapsedIds, focusedId, setBlocks, setFocusedId, expandIds } = props;
+
+  // ── in-note search ──────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [matchIdx, setMatchIdx] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const matchIds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!searchOpen || !q) return [] as string[];
+    const out: string[] = [];
+    const walk = (list: Block[]) => {
+      for (const b of list) {
+        if (b.text.toLowerCase().includes(q)) out.push(b.id);
+        walk(b.children);
+      }
+    };
+    walk(blocks);
+    return out;
+  }, [blocks, searchOpen, searchQuery]);
+
+  const matchSet = useMemo(() => new Set(matchIds), [matchIds]);
+  const currentMatchId = matchIds[matchIdx] ?? null;
+  const searchCtx: SearchContext | null = searchOpen && searchQuery.trim()
+    ? { query: searchQuery.trim(), matchSet, currentId: currentMatchId }
+    : null;
+
+  // Reset match index when query changes.
+  useEffect(() => { setMatchIdx(0); }, [searchQuery, searchOpen]);
+
+  // When the current match changes, expand ancestors and scroll it into view.
+  useEffect(() => {
+    if (!currentMatchId) return;
+    const ancs = ancestorIdsOf(blocks, currentMatchId);
+    if (ancs.length > 0) expandIds(ancs);
+    requestAnimationFrame(() => {
+      const el = document.querySelector(
+        `[data-block-id="${currentMatchId}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }, [currentMatchId]);
+
+  // ⌘F / Ctrl+F toggles the search bar.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+        requestAnimationFrame(() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const closeSearch = () => { setSearchOpen(false); setSearchQuery(""); };
+  const stepMatch = (delta: number) => {
+    if (matchIds.length === 0) return;
+    setMatchIdx((i) => (i + delta + matchIds.length) % matchIds.length);
+  };
 
   // Any focus landing on a block clears the block selection — the user is
   // back to editing a single block.
@@ -188,7 +260,7 @@ export function Outliner(props: OutlinerProps) {
     return () => document.removeEventListener("paste", onPaste);
   }, [blocks, focusedId, setBlocks, setFocusedId]);
 
-  const childProps = { ...props, selectedIds };
+  const childProps = { ...props, selectedIds, search: searchCtx };
 
   return (
     <div
@@ -198,12 +270,84 @@ export function Outliner(props: OutlinerProps) {
       onMouseMove={handleMouseMove}
       onClickCapture={handleClickCapture}
     >
+      {searchOpen && (
+        <NoteSearchBar
+          inputRef={searchInputRef}
+          query={searchQuery}
+          setQuery={setSearchQuery}
+          matchCount={matchIds.length}
+          matchIdx={matchIdx}
+          onNext={() => stepMatch(1)}
+          onPrev={() => stepMatch(-1)}
+          onClose={closeSearch}
+        />
+      )}
       <BlockList {...childProps} list={props.blocks} />
     </div>
   );
 }
 
-type BlockRowSharedProps = OutlinerProps & { selectedIds: Set<string> };
+function NoteSearchBar({
+  inputRef, query, setQuery, matchCount, matchIdx, onNext, onPrev, onClose,
+}: {
+  inputRef: React.RefObject<HTMLInputElement>;
+  query: string;
+  setQuery: (v: string) => void;
+  matchCount: number;
+  matchIdx: number;
+  onNext: () => void;
+  onPrev: () => void;
+  onClose: () => void;
+}) {
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) onPrev(); else onNext();
+    }
+  };
+  const counter = query.trim()
+    ? matchCount === 0 ? "No matches" : `${matchIdx + 1} / ${matchCount}`
+    : "";
+  return (
+    <div className="note-search">
+      <input
+        ref={inputRef}
+        className="note-search-input"
+        placeholder="Find in note…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={onKey}
+      />
+      <span className="note-search-count">{counter}</span>
+      <button
+        type="button"
+        className="note-search-btn"
+        onClick={onPrev}
+        disabled={matchCount === 0}
+        title="Previous match (Shift+Enter)"
+      >↑</button>
+      <button
+        type="button"
+        className="note-search-btn"
+        onClick={onNext}
+        disabled={matchCount === 0}
+        title="Next match (Enter)"
+      >↓</button>
+      <button
+        type="button"
+        className="note-search-btn"
+        onClick={onClose}
+        title="Close (Esc)"
+      >✕</button>
+    </div>
+  );
+}
+
+type BlockRowSharedProps = OutlinerProps & {
+  selectedIds: Set<string>;
+  search: SearchContext | null;
+};
 type BlockListProps = BlockRowSharedProps & { list: Block[] };
 
 function BlockList({ list, ...rest }: BlockListProps) {
@@ -300,11 +444,15 @@ function BlockRow({
 
   const isToday = props.todayBlockId === block.id;
   const isCarried = block.properties.carried != null;
+  const isMatch = props.search?.matchSet.has(block.id) ?? false;
+  const isCurrentMatch = props.search?.currentId === block.id;
   const liClass = [
     "block",
     isToday ? "block-today" : "",
     isCarried ? "block-carried" : "",
     isSelected ? "block-selected" : "",
+    isMatch ? "block-match" : "",
+    isCurrentMatch ? "block-match-current" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -334,7 +482,7 @@ function BlockRow({
             {block.text === "" ? (
               <span className="block-placeholder" />
             ) : (
-              renderInline(block.text, props.onOpenLink)
+              renderInline(block.text, props.onOpenLink, props.search?.query ?? null)
             )}
           </div>
         )}
@@ -372,21 +520,47 @@ function formatPropValue(v: string): string {
   return m ? `${m[1]} ${m[2]}` : v;
 }
 
-function renderInline(text: string, onOpenLink: (t: string) => void) {
+function renderInline(
+  text: string,
+  onOpenLink: (t: string) => void,
+  highlight: string | null,
+) {
+  const hl = (s: string, key: number) => highlightText(s, highlight, key);
   return parseInline(text).map((part, i) => {
     switch (part.type) {
       case "link":
         return (
           <a key={i} className="wiki-link" onClick={(e) => { e.stopPropagation(); onOpenLink(part.title); }}>
-            {part.title}
+            {hl(part.title, i)}
           </a>
         );
-      case "bold":   return <strong key={i}>{part.value}</strong>;
-      case "italic": return <em key={i}>{part.value}</em>;
-      case "tag":    return <span key={i} className="inline-tag">#{part.value}</span>;
-      default:       return <span key={i}>{part.value}</span>;
+      case "bold":   return <strong key={i}>{hl(part.value, i)}</strong>;
+      case "italic": return <em key={i}>{hl(part.value, i)}</em>;
+      case "tag":    return <span key={i} className="inline-tag">#{hl(part.value, i)}</span>;
+      default:       return <span key={i}>{hl(part.value, i)}</span>;
     }
   });
+}
+
+function highlightText(text: string, query: string | null, keyBase: number) {
+  if (!query) return text;
+  const q = query.toLowerCase();
+  const hay = text.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  while (i < text.length) {
+    const hit = hay.indexOf(q, i);
+    if (hit < 0) { parts.push(text.slice(i)); break; }
+    if (hit > i) parts.push(text.slice(i, hit));
+    parts.push(
+      <mark key={`${keyBase}-${k++}`} className="search-hit">
+        {text.slice(hit, hit + q.length)}
+      </mark>,
+    );
+    i = hit + q.length;
+  }
+  return <>{parts}</>;
 }
 
 function CollapseToggle({
@@ -416,13 +590,24 @@ function StatePill({ state, onClick }: { state: TodoState; onClick: () => void }
   );
 }
 
+const EXPANDED_LRU_CAP = 5;
+
 export function useCollapse() {
-  const [collapsedIds, setCollapsedIds] = useState<CollapsedIds>(new Set());
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const expandedSet = new Set(expandedIds);
+  const collapsedIds: CollapsedIds = {
+    has: (id: string) => !expandedSet.has(id),
+  };
   const toggleCollapse = (id: string) =>
-    setCollapsedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
+    setExpandedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [id, ...prev].slice(0, EXPANDED_LRU_CAP);
     });
-  return { collapsedIds, toggleCollapse };
+  const expandIds = (ids: string[]) =>
+    setExpandedIds((prev) => {
+      const fresh = ids.filter((id) => !prev.includes(id));
+      if (fresh.length === 0) return prev;
+      return [...fresh, ...prev];
+    });
+  return { collapsedIds, toggleCollapse, expandIds };
 }

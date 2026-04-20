@@ -32,6 +32,21 @@ export function locate(blocks: Block[], id: string): Location | null {
   return go(blocks, null);
 }
 
+/** Returns the chain of ancestor block IDs for `id`, root-first.
+ *  Empty if the block is at the root or not found. */
+export function ancestorIdsOf(blocks: Block[], id: string): string[] {
+  let found: string[] | null = null;
+  const go = (list: Block[], chain: string[]) => {
+    for (const b of list) {
+      if (b.id === id) { found = chain; return; }
+      go(b.children, [...chain, b.id]);
+      if (found) return;
+    }
+  };
+  go(blocks, []);
+  return found ?? [];
+}
+
 export type FlatEntry = { block: Block; depth: number };
 
 export function flatten(blocks: Block[]): FlatEntry[] {

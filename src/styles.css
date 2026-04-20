@@ -201,6 +201,26 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .block-preview { flex: 1; padding: 2px 4px; cursor: text; min-height: 22px; line-height: 1.5; }
 .block-placeholder { display: inline-block; width: 1px; }
 
+/* In-note search */
+.note-search {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 6px; margin-bottom: 8px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.25);
+}
+.note-search-input { flex: 1; padding: 4px 6px; font-size: 13px; }
+.note-search-count { font-size: 11px; color: var(--muted); min-width: 60px; text-align: right; }
+.note-search-btn {
+  width: 22px; height: 22px; font-size: 11px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.note-search-btn:not(:disabled):hover { color: var(--fg); border-color: var(--accent); }
+.note-search-btn:disabled { opacity: 0.4; cursor: default; }
+.search-hit { background: color-mix(in srgb, var(--accent) 40%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.block-match-current > .block-row { outline: 1px solid var(--accent); border-radius: 3px; }
+
 /* Inline formatting */
 .wiki-link { color: var(--accent); cursor: pointer; text-decoration: none; }
 .wiki-link::before { content: "[["; opacity: 0.45; }

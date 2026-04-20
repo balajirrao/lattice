@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { type Block, newBlock, resetIdCounter } from "../block";
 import {
+  ancestorIdsOf,
   clone,
   flatten,
   indent,
@@ -64,6 +65,26 @@ describe("locate", () => {
     const loc = locate(tree, a1a.id)!;
     expect(loc.parent).toBe(tree[0].children[0]);
     expect(loc.index).toBe(0);
+  });
+});
+
+describe("ancestorIdsOf", () => {
+  it("returns chain from root to target, target excluded", () => {
+    const tree = sample();
+    const a1a = tree[0].children[0].children[0];
+    expect(ancestorIdsOf(tree, a1a.id)).toEqual([
+      tree[0].id,
+      tree[0].children[0].id,
+    ]);
+  });
+
+  it("returns empty for root-level blocks", () => {
+    const tree = sample();
+    expect(ancestorIdsOf(tree, tree[0].id)).toEqual([]);
+  });
+
+  it("returns empty for unknown id", () => {
+    expect(ancestorIdsOf(sample(), "nope")).toEqual([]);
   });
 });
 
