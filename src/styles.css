@@ -148,6 +148,15 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
   opacity: 0.55;
 }
 
+.block-selected > .block-row {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 3px;
+}
+.block-selected > .block-row .block-preview,
+.block-selected > .block-row .block-input {
+  user-select: none;
+}
+
 .bullet { color: var(--muted); font-size: 10px; width: 16px; text-align: center; user-select: none; flex-shrink: 0; }
 .collapse-toggle {
   width: 16px; height: 16px; font-size: 8px; color: var(--muted); flex-shrink: 0;

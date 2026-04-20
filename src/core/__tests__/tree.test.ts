@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { newBlock, resetIdCounter } from "../block";
+import { type Block, newBlock, resetIdCounter } from "../block";
 import {
   clone,
   flatten,
   indent,
   insertAfter,
+  insertBlocksAfter,
   locate,
   moveDown,
   moveUp,
   outdent,
+  regenerateIds,
   removeBlock,
+  selectionRoots,
   setState,
   updateText,
 } from "../tree";
@@ -275,5 +278,89 @@ describe("removeBlock", () => {
     expect(flatten(next).map((f) => f.block.text)).toEqual(
       flatten(tree).map((f) => f.block.text),
     );
+  });
+});
+
+describe("regenerateIds", () => {
+  it("gives every block in the subtree a fresh id", () => {
+    const tree = sample();
+    const originalIds = flatten(tree).map((f) => f.block.id);
+    const next = regenerateIds(tree);
+    const newIds = flatten(next).map((f) => f.block.id);
+    expect(newIds).toHaveLength(originalIds.length);
+    for (const id of newIds) expect(originalIds).not.toContain(id);
+  });
+
+  it("preserves text, state, properties, and structure", () => {
+    const tree = sample();
+    const next = regenerateIds(tree);
+    const shape = (list: Block[]): unknown =>
+      list.map((b) => ({ text: b.text, children: shape(b.children) }));
+    expect(shape(next)).toEqual(shape(tree));
+  });
+});
+
+describe("selectionRoots", () => {
+  it("returns only outermost selected blocks in document order", () => {
+    const tree = sample();
+    const a = tree[0];
+    const a1 = a.children[0];
+    const a1a = a1.children[0];
+    const b = tree[1];
+    // Select a, a1a, b → a1a is inside a's subtree so it drops out.
+    const roots = selectionRoots(tree, new Set([a.id, a1a.id, b.id]));
+    expect(roots.map((r) => r.text)).toEqual(["a", "b"]);
+  });
+
+  it("returns non-adjacent selected siblings in document order", () => {
+    const tree = sample();
+    const a1 = tree[0].children[0];
+    const a2 = tree[0].children[1];
+    const roots = selectionRoots(tree, new Set([a2.id, a1.id]));
+    expect(roots.map((r) => r.text)).toEqual(["a1", "a2"]);
+  });
+
+  it("returns [] for empty selection", () => {
+    expect(selectionRoots(sample(), new Set())).toEqual([]);
+  });
+});
+
+describe("insertBlocksAfter", () => {
+  it("replaces target block when it is empty", () => {
+    const empty = newBlock("");
+    const tree = [empty];
+    const fresh = [newBlock("x"), newBlock("y")];
+    const { tree: next, lastId } = insertBlocksAfter(tree, empty.id, fresh);
+    expect(next.map((b) => b.text)).toEqual(["x", "y"]);
+    expect(lastId).toBe(fresh[1].id);
+  });
+
+  it("inserts after target as siblings when target has content", () => {
+    const tree = sample();
+    const a = tree[0];
+    const fresh = [newBlock("new1"), newBlock("new2")];
+    const { tree: next } = insertBlocksAfter(tree, a.id, fresh);
+    expect(next.map((b) => b.text)).toEqual(["a", "new1", "new2", "b"]);
+  });
+
+  it("appends at root when afterId is null", () => {
+    const tree = sample();
+    const fresh = [newBlock("z")];
+    const { tree: next } = insertBlocksAfter(tree, null, fresh);
+    expect(next.map((b) => b.text)).toEqual(["a", "b", "z"]);
+  });
+
+  it("appends at root when afterId is not found", () => {
+    const tree = sample();
+    const fresh = [newBlock("z")];
+    const { tree: next } = insertBlocksAfter(tree, "missing", fresh);
+    expect(next.map((b) => b.text)).toEqual(["a", "b", "z"]);
+  });
+
+  it("is a no-op when inserted list is empty", () => {
+    const tree = sample();
+    const { tree: next, lastId } = insertBlocksAfter(tree, tree[0].id, []);
+    expect(next.map((b) => b.text)).toEqual(["a", "b"]);
+    expect(lastId).toBeNull();
   });
 });

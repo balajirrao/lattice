@@ -3,6 +3,7 @@ import {
   type TodoState,
   STATE_FAMILIES,
   currentTimestamp,
+  genId,
 } from "./block";
 
 export type Location = {
@@ -182,6 +183,73 @@ export function moveDown(blocks: Block[], id: string): { tree: Block[]; id: stri
   const i = loc.index;
   [loc.list[i], loc.list[i + 1]] = [loc.list[i + 1], loc.list[i]];
   return { tree: copy, id };
+}
+
+/**
+ * Deep clone blocks with freshly generated IDs. Used for paste so that
+ * pasting the same clipboard content repeatedly (or into the same note)
+ * never produces duplicate IDs.
+ */
+export function regenerateIds(blocks: Block[]): Block[] {
+  return blocks.map((b) => ({
+    ...b,
+    id: genId(),
+    properties: { ...b.properties },
+    children: regenerateIds(b.children),
+  }));
+}
+
+/**
+ * Given a selection (set of block IDs), return the subtrees rooted at the
+ * outermost selected blocks in document order. A selected descendant of a
+ * selected ancestor is skipped — it is already part of the ancestor's
+ * subtree.
+ */
+export function selectionRoots(
+  blocks: Block[],
+  selected: Set<string>,
+): Block[] {
+  const out: Block[] = [];
+  const walk = (list: Block[]) => {
+    for (const b of list) {
+      if (selected.has(b.id)) out.push(b);
+      else walk(b.children);
+    }
+  };
+  walk(blocks);
+  return out;
+}
+
+/**
+ * Splice a list of blocks into the tree relative to `afterId`.
+ * - If `afterId` is null / not found: append at root.
+ * - If the target block is empty (no text, no state, no children):
+ *   replace it with the inserted blocks.
+ * - Otherwise: insert as the next siblings of the target.
+ */
+export function insertBlocksAfter(
+  blocks: Block[],
+  afterId: string | null,
+  inserted: Block[],
+): { tree: Block[]; lastId: string | null } {
+  if (inserted.length === 0) return { tree: clone(blocks), lastId: null };
+  const copy = clone(blocks);
+  const lastId = inserted[inserted.length - 1].id;
+  if (afterId === null) {
+    copy.push(...inserted);
+    return { tree: copy, lastId };
+  }
+  const loc = locate(copy, afterId);
+  if (!loc) {
+    copy.push(...inserted);
+    return { tree: copy, lastId };
+  }
+  const target = loc.list[loc.index];
+  const isEmpty =
+    target.text === "" && target.state === null && target.children.length === 0;
+  if (isEmpty) loc.list.splice(loc.index, 1, ...inserted);
+  else loc.list.splice(loc.index + 1, 0, ...inserted);
+  return { tree: copy, lastId };
 }
 
 export function removeBlock(
