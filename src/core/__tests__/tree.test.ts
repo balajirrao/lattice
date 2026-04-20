@@ -12,6 +12,7 @@ import {
   outdent,
   regenerateIds,
   removeBlock,
+  removeBlocks,
   selectionRoots,
   setState,
   updateText,
@@ -362,5 +363,45 @@ describe("insertBlocksAfter", () => {
     const { tree: next, lastId } = insertBlocksAfter(tree, tree[0].id, []);
     expect(next.map((b) => b.text)).toEqual(["a", "b"]);
     expect(lastId).toBeNull();
+  });
+});
+
+describe("removeBlocks", () => {
+  it("removes each selected block and its whole subtree", () => {
+    const tree = sample();
+    const a = tree[0];
+    const { tree: next } = removeBlocks(tree, new Set([a.id]));
+    expect(flatten(next).map((f) => f.block.text)).toEqual(["b"]);
+  });
+
+  it("removes multiple disjoint selections", () => {
+    const tree = sample();
+    const a1 = tree[0].children[0];
+    const b = tree[1];
+    const { tree: next } = removeBlocks(tree, new Set([a1.id, b.id]));
+    expect(flatten(next).map((f) => f.block.text)).toEqual(["a", "a2"]);
+  });
+
+  it("reports prevId as the block visually preceding the earliest removal", () => {
+    const tree = sample();
+    const a2 = tree[0].children[1];
+    const { prevId } = removeBlocks(tree, new Set([a2.id]));
+    // flatten order: a, a1, a1a, a2, b → block before a2 is a1a
+    expect(prevId).toBe(tree[0].children[0].children[0].id);
+  });
+
+  it("returns null prevId when the first block is removed", () => {
+    const tree = sample();
+    const { prevId } = removeBlocks(tree, new Set([tree[0].id]));
+    expect(prevId).toBeNull();
+  });
+
+  it("is a no-op for empty selection", () => {
+    const tree = sample();
+    const { tree: next, prevId } = removeBlocks(tree, new Set());
+    expect(flatten(next).map((f) => f.block.text)).toEqual(
+      flatten(tree).map((f) => f.block.text),
+    );
+    expect(prevId).toBeNull();
   });
 });

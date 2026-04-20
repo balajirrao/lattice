@@ -16,6 +16,7 @@ import {
   parseMarkdown,
   regenerateIds,
   removeBlock,
+  removeBlocks,
   selectionRoots,
   serializeMarkdown,
   setState,
@@ -134,16 +135,27 @@ export function Outliner(props: OutlinerProps) {
     }
   };
 
-  // Esc clears selection.
+  // Selection-level keys: Esc clears; Backspace/Delete removes.
   useEffect(() => {
+    if (selectedIds.size === 0) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedIds.size > 0) {
+      if (e.key === "Escape") {
+        e.preventDefault();
         setSelectedIds(new Set());
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        e.preventDefault();
+        const { tree, prevId } = removeBlocks(blocks, selectedIds);
+        const safeTree = tree.length === 0 ? [newBlock()] : tree;
+        setBlocks(safeTree);
+        setSelectedIds(new Set());
+        setFocusedId(prevId ?? safeTree[0].id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedIds]);
+  }, [blocks, selectedIds, setBlocks, setFocusedId]);
 
   // Copy: serialize selection subtrees to markdown.
   useEffect(() => {
