@@ -142,9 +142,13 @@ function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
   const hasProps = Object.keys(block.properties).length > 0;
 
   const isToday = props.todayBlockId === block.id;
+  const isCarried = block.properties.carried != null;
+  const liClass = ["block", isToday ? "block-today" : "", isCarried ? "block-carried" : ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <li className={isToday ? "block block-today" : "block"}>
+    <li className={liClass}>
       <div className="block-row">
         <CollapseToggle
           hasChildren={hasChildren}

@@ -142,6 +142,11 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
   content: ""; width: 3px; align-self: stretch; background: var(--accent);
   border-radius: 2px; margin-right: 2px;
 }
+.block-carried > .block-row .block-input,
+.block-carried > .block-row .block-preview {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
 
 .bullet { color: var(--muted); font-size: 10px; width: 16px; text-align: center; user-select: none; flex-shrink: 0; }
 .collapse-toggle {
