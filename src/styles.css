@@ -25,7 +25,7 @@ html, body, #root {
 }
 
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
-input  { font: inherit; color: inherit; background: transparent; border: none; outline: none; }
+input, textarea { font: inherit; color: inherit; background: transparent; border: none; outline: none; }
 kbd { font: inherit; background: #2a2b35; border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 12px; }
 
 /* ── Loading ── */
@@ -135,7 +135,7 @@ kbd { font: inherit; background: #2a2b35; border: 1px solid var(--border); borde
 ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .outliner > ul.blocks { padding-left: 0; }
 .block { margin: 1px 0; }
-.block-row { display: flex; align-items: center; gap: 6px; min-height: 26px; }
+.block-row { display: flex; align-items: flex-start; gap: 6px; min-height: 26px; }
 .block-today > .block-row .block-input,
 .block-today > .block-row .block-preview { font-weight: 600; color: var(--accent); }
 .block-today > .block-row::before {
@@ -157,9 +157,9 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
   user-select: none;
 }
 
-.bullet { color: var(--muted); font-size: 10px; width: 16px; text-align: center; user-select: none; flex-shrink: 0; }
+.bullet { color: var(--muted); font-size: 10px; width: 16px; text-align: center; user-select: none; flex-shrink: 0; height: 26px; line-height: 26px; }
 .collapse-toggle {
-  width: 16px; height: 16px; font-size: 8px; color: var(--muted); flex-shrink: 0;
+  width: 16px; height: 26px; font-size: 8px; color: var(--muted); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
 .collapse-toggle:hover { color: var(--fg); }
@@ -197,8 +197,15 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .prop-done .prop-value     { color: var(--done); }
 
 /* Block input / preview */
-.block-input { flex: 1; padding: 2px 4px; line-height: 1.5; }
-.block-preview { flex: 1; padding: 2px 4px; cursor: text; min-height: 22px; line-height: 1.5; }
+.block-input {
+  flex: 1; padding: 2px 4px; line-height: 1.5;
+  resize: none; overflow: hidden; min-height: 22px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.block-preview {
+  flex: 1; padding: 2px 4px; cursor: text; min-height: 22px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+}
 .block-placeholder { display: inline-block; width: 1px; }
 
 /* In-note search */

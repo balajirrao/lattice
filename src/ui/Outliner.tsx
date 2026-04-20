@@ -364,7 +364,7 @@ function BlockRow({
   block,
   ...props
 }: BlockRowSharedProps & { block: Block }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const isFocused = props.focusedId === block.id;
   const isCollapsed = props.collapsedIds.has(block.id);
   const hasChildren = block.children.length > 0;
@@ -374,7 +374,15 @@ function BlockRow({
     if (isFocused && inputRef.current) inputRef.current.focus();
   }, [isFocused]);
 
-  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // Auto-grow the textarea so long lines wrap across multiple visual rows.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [block.text, isFocused]);
+
+  const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && e.altKey) {
       e.preventDefault();
       props.setBlocks(setState(props.blocks, block.id, cycleFamily(block.state)));
@@ -383,14 +391,34 @@ function BlockRow({
       props.setBlocks(setState(props.blocks, block.id, cycleState(block.state)));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const nb = newBlock();
+      // Split at the caret: text before stays in the current block, text
+      // after moves into the new one (so Enter mid-line behaves like a
+      // regular line break).
+      const el = e.currentTarget;
+      const pos = el.selectionStart ?? block.text.length;
+      const before = block.text.slice(0, pos);
+      const after = block.text.slice(pos);
+      const blocksWithEdit = before === block.text
+        ? props.blocks
+        : updateText(props.blocks, block.id, before);
       // When collapsed, the children are hidden — inserting as the first
       // child would appear to do nothing. Force sibling in that case.
-      const { tree, id } = insertAfter(props.blocks, block.id, nb, {
-        asSibling: isCollapsed,
-      });
+      const { tree, id } = insertAfter(
+        blocksWithEdit,
+        block.id,
+        newBlock(after),
+        { asSibling: isCollapsed },
+      );
       props.setBlocks(tree);
       props.setFocusedId(id);
+      if (after.length > 0) {
+        requestAnimationFrame(() => {
+          const next = document.querySelector(
+            `[data-block-id="${id}"] .block-input`,
+          ) as HTMLTextAreaElement | null;
+          next?.setSelectionRange(0, 0);
+        });
+      }
     } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       const r = indent(props.blocks, block.id);
@@ -425,7 +453,7 @@ function BlockRow({
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const pos = e.target.selectionStart ?? val.length;
     if (pos >= 2 && val.slice(pos - 2, pos) === "[[") {
@@ -469,10 +497,11 @@ function BlockRow({
           <StatePill state={block.state} onClick={cycleBlockState} />
         )}
         {isFocused ? (
-          <input
+          <textarea
             ref={inputRef}
             className="block-input"
             value={block.text}
+            rows={1}
             onChange={handleChange}
             onKeyDown={handleKey}
             onBlur={() => { if (props.focusedId === block.id) props.setFocusedId(null); }}
