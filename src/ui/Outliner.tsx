@@ -7,12 +7,17 @@ import {
   cycleState,
   indent,
   insertAfter,
+  insertBlocksAfter,
   moveDown,
   moveUp,
   newBlock,
   outdent,
   parseInline,
+  parseMarkdown,
+  regenerateIds,
   removeBlock,
+  selectionRoots,
+  serializeMarkdown,
   setState,
   updateText,
 } from "../core";
@@ -45,15 +50,151 @@ function visibleFlat(blocks: Block[], collapsed: CollapsedIds): Block[] {
   return out;
 }
 
+/** Looks like our markdown format: every non-empty line starts with `-`
+ *  or whitespace+`-`, and there is more than one such line (single-line
+ *  pastes go through the native text-paste path so plain text isn't
+ *  hijacked). */
+function isBulkOutlineClipboard(text: string): boolean {
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return false;
+  return lines.every((l) => /^\s*-/.test(l));
+}
+
 export function Outliner(props: OutlinerProps) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const anchorIdRef = useRef<string | null>(null);
+  const dragActiveRef = useRef(false);
+  // If a drag ends back on its anchor, a click still fires — suppress it
+  // so the block-preview's onClick doesn't re-focus and clear selection.
+  const suppressClickRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const { blocks, collapsedIds, focusedId, setBlocks, setFocusedId } = props;
+
+  // Any focus landing on a block clears the block selection — the user is
+  // back to editing a single block.
+  useEffect(() => {
+    if (focusedId !== null) setSelectedIds(new Set());
+  }, [focusedId]);
+
+  const blockIdFromTarget = (t: EventTarget | null): string | null => {
+    let el = t as HTMLElement | null;
+    while (el) {
+      if (el.dataset && el.dataset.blockId) return el.dataset.blockId;
+      el = el.parentElement;
+    }
+    return null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const id = blockIdFromTarget(e.target);
+    if (!id) return;
+    anchorIdRef.current = id;
+    dragActiveRef.current = false;
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const anchor = anchorIdRef.current;
+    if (!anchor) return;
+    const current = blockIdFromTarget(e.target);
+    if (!current) return;
+    if (!dragActiveRef.current && current === anchor) return;
+    if (!dragActiveRef.current) {
+      dragActiveRef.current = true;
+      if (document.activeElement instanceof HTMLInputElement) {
+        document.activeElement.blur();
+      }
+      window.getSelection()?.removeAllRanges();
+      setFocusedId(null);
+    }
+    const flat = visibleFlat(blocks, collapsedIds).map((b) => b.id);
+    const ai = flat.indexOf(anchor);
+    const ci = flat.indexOf(current);
+    if (ai < 0 || ci < 0) return;
+    const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
+    setSelectedIds(new Set(flat.slice(lo, hi + 1)));
+  };
+
+  // A drag that ends outside the outliner still needs to clear state.
+  useEffect(() => {
+    const onUp = () => {
+      if (dragActiveRef.current) suppressClickRef.current = true;
+      anchorIdRef.current = null;
+      dragActiveRef.current = false;
+    };
+    document.addEventListener("mouseup", onUp);
+    return () => document.removeEventListener("mouseup", onUp);
+  }, []);
+
+  const handleClickCapture = (e: React.MouseEvent) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      e.stopPropagation();
+    }
+  };
+
+  // Esc clears selection.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedIds.size > 0) {
+        setSelectedIds(new Set());
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIds]);
+
+  // Copy: serialize selection subtrees to markdown.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const onCopy = (e: ClipboardEvent) => {
+      const roots = selectionRoots(blocks, selectedIds);
+      if (roots.length === 0) return;
+      e.clipboardData?.setData("text/plain", serializeMarkdown(roots));
+      e.preventDefault();
+    };
+    document.addEventListener("copy", onCopy);
+    return () => document.removeEventListener("copy", onCopy);
+  }, [blocks, selectedIds]);
+
+  // Paste: if the clipboard looks like a bulk outline, splice it in.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text || !isBulkOutlineClipboard(text)) return;
+      const parsed = parseMarkdown(text);
+      if (parsed.length === 0) return;
+      e.preventDefault();
+      const fresh = regenerateIds(parsed);
+      const { tree, lastId } = insertBlocksAfter(blocks, focusedId, fresh);
+      setBlocks(tree);
+      setSelectedIds(new Set());
+      if (lastId) setFocusedId(lastId);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [blocks, focusedId, setBlocks, setFocusedId]);
+
+  const childProps = { ...props, selectedIds };
+
   return (
-    <div className="outliner">
-      <BlockList {...props} list={props.blocks} />
+    <div
+      ref={rootRef}
+      className="outliner"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onClickCapture={handleClickCapture}
+    >
+      <BlockList {...childProps} list={props.blocks} />
     </div>
   );
 }
 
-function BlockList({ list, ...rest }: OutlinerProps & { list: Block[] }) {
+type BlockRowSharedProps = OutlinerProps & { selectedIds: Set<string> };
+type BlockListProps = BlockRowSharedProps & { list: Block[] };
+
+function BlockList({ list, ...rest }: BlockListProps) {
   return (
     <ul className="blocks">
       {list.map((b) => (
@@ -63,11 +204,15 @@ function BlockList({ list, ...rest }: OutlinerProps & { list: Block[] }) {
   );
 }
 
-function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
+function BlockRow({
+  block,
+  ...props
+}: BlockRowSharedProps & { block: Block }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const isFocused = props.focusedId === block.id;
   const isCollapsed = props.collapsedIds.has(block.id);
   const hasChildren = block.children.length > 0;
+  const isSelected = props.selectedIds.has(block.id);
 
   useEffect(() => {
     if (isFocused && inputRef.current) inputRef.current.focus();
@@ -143,12 +288,17 @@ function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
 
   const isToday = props.todayBlockId === block.id;
   const isCarried = block.properties.carried != null;
-  const liClass = ["block", isToday ? "block-today" : "", isCarried ? "block-carried" : ""]
+  const liClass = [
+    "block",
+    isToday ? "block-today" : "",
+    isCarried ? "block-carried" : "",
+    isSelected ? "block-selected" : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <li className={liClass}>
+    <li className={liClass} data-block-id={block.id}>
       <div className="block-row">
         <CollapseToggle
           hasChildren={hasChildren}
