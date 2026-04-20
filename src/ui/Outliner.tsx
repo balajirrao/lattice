@@ -28,6 +28,8 @@ type OutlinerProps = {
   collapsedIds: CollapsedIds;
   toggleCollapse: (id: string) => void;
   showProperties: boolean;
+  /** Block to visually mark as "today" (e.g. Monday block in this week's note). */
+  todayBlockId?: string | null;
 };
 
 /** Flatten blocks in visual order, skipping children of collapsed blocks. */
@@ -81,7 +83,11 @@ function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
     } else if (e.key === "Enter") {
       e.preventDefault();
       const nb = newBlock();
-      const { tree, id } = insertAfter(props.blocks, block.id, nb);
+      // When collapsed, the children are hidden — inserting as the first
+      // child would appear to do nothing. Force sibling in that case.
+      const { tree, id } = insertAfter(props.blocks, block.id, nb, {
+        asSibling: isCollapsed,
+      });
       props.setBlocks(tree);
       props.setFocusedId(id);
     } else if (e.key === "Tab" && !e.shiftKey) {
@@ -135,8 +141,10 @@ function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
 
   const hasProps = Object.keys(block.properties).length > 0;
 
+  const isToday = props.todayBlockId === block.id;
+
   return (
-    <li className="block">
+    <li className={isToday ? "block block-today" : "block"}>
       <div className="block-row">
         <CollapseToggle
           hasChildren={hasChildren}
@@ -176,7 +184,7 @@ function BlockRow({ block, ...props }: OutlinerProps & { block: Block }) {
 }
 
 function PropertyChips({ properties }: { properties: Properties }) {
-  const order = ["created", "started", "done", "carried_from"];
+  const order = ["created", "started", "done"];
   const keys = Object.keys(properties);
   const known = order.filter((k) => k in properties);
   const rest = keys.filter((k) => !order.includes(k)).sort();

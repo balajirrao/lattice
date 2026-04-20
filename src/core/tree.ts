@@ -113,14 +113,16 @@ export function cycleFamily(state: TodoState): TodoState {
 
 /**
  * Insert a new block after the target.
- * If the target has children, the new block becomes the first child.
- * Otherwise it is inserted as the next sibling.
+ * If the target has children, the new block becomes the first child —
+ * unless `asSibling` is set, in which case it is always inserted as the
+ * next sibling (used when the target is visually collapsed in the UI).
  * If `afterId` is null, append at root level.
  */
 export function insertAfter(
   blocks: Block[],
   afterId: string | null,
   newBlock: Block,
+  opts: { asSibling?: boolean } = {},
 ): { tree: Block[]; id: string } {
   const copy = clone(blocks);
   if (afterId === null) {
@@ -133,7 +135,7 @@ export function insertAfter(
     return { tree: copy, id: newBlock.id };
   }
   const target = loc.list[loc.index];
-  if (target.children.length > 0) {
+  if (!opts.asSibling && target.children.length > 0) {
     target.children.unshift(newBlock);
   } else {
     loc.list.splice(loc.index + 1, 0, newBlock);
