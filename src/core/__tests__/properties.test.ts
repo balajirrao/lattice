@@ -88,7 +88,7 @@ describe("markdown roundtrip with properties", () => {
 
   it("is idempotent over two serialize passes", () => {
     const md =
-      "-QUESTION why? @created(2026-04-15T14:22) @carried_from(2026-W15)\n" +
+      "-QUESTION why? @created(2026-04-15T14:22) @source(research_notes)\n" +
       "-IDEA try caching @created(2026-04-16T08:00)\n";
     const once = serializeMarkdown(parseMarkdown(md));
     const twice = serializeMarkdown(parseMarkdown(once));

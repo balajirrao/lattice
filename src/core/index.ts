@@ -3,6 +3,7 @@ export * from "./tree";
 export * from "./markdown";
 export * from "./inline";
 export * from "./week";
-export * from "./carry";
+export * from "./open";
+export * from "./undo";
 // links.ts is kept for backward compat; prefer parseInline for new code
 export { renderTextParts } from "./links";

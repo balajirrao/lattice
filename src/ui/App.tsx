@@ -3,15 +3,26 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type Block,
+  type UndoSnapshot,
+  closingState,
+  collectOpenItems,
+  formatWeekRange,
   isWeeklyTitle,
   newBlock,
   parseMarkdown,
+  popSnapshot,
+  pushSnapshot,
   serializeMarkdown,
+  setProperty,
+  setState,
   titleToWeekId,
+  weekId,
+  weekdayFor,
 } from "../core";
 import { Outliner, useCollapse } from "./Outliner";
 import { VaultPicker } from "./VaultPicker";
 import { SearchModal } from "./SearchModal";
+import { OpenView } from "./OpenView";
 import { CommandPalette } from "./CommandPalette";
 import { useAutoUpdate } from "./useAutoUpdate";
 import * as api from "./api";
@@ -22,6 +33,26 @@ import {
 } from "../workflows";
 
 type Phase = "loading" | "pick-vault" | "ready";
+
+/**
+ * For the current week's note, locate the day block under the "Dailies"
+ * parent that matches today's weekday. Returns null for non-weekly notes,
+ * non-current weeks, or when the template has been removed.
+ */
+function todayDayBlockId(title: string | null, blocks: Block[]): string | null {
+  if (!title || !isWeeklyTitle(title)) return null;
+  const now = new Date();
+  if (titleToWeekId(title) !== weekId(now)) return null;
+  const dailies = blocks.find((b) => b.text === "Dailies");
+  if (!dailies) return null;
+  const today = weekdayFor(now);
+  const hit = dailies.children.find((b) => b.text === today);
+  return hit?.id ?? null;
+}
+
+function initialFocusId(title: string, blocks: Block[]): string {
+  return todayDayBlockId(title, blocks) ?? blocks[0].id;
+}
 
 function zettelTitle(): string {
   const now = new Date();
@@ -52,6 +83,7 @@ export function App() {
   const [titleDraft, setTitleDraft] = useState("");
 
   const [showSearch, setShowSearch] = useState(false);
+  const [showOpen, setShowOpen] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [showProperties, setShowProperties] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -59,6 +91,19 @@ export function App() {
   const updater = useAutoUpdate();
 
   const skipAutosaveRef = useRef(false);
+
+  // Undo: a snapshot captures the "before" state of a single mutation.
+  // Editor snapshots come from autosave ticks; disk snapshots come from
+  // cross-note writes (close-item, mark-carried).
+  type UndoPayload =
+    | { kind: "editor"; title: string; blocks: Block[] }
+    | { kind: "disk"; title: string; content: string };
+  const undoStackRef = useRef<UndoSnapshot<UndoPayload>[]>([]);
+  const lastSavedBlocksRef = useRef<Block[]>([]);
+  const MAX_UNDO = 50;
+  const pushUndo = (snap: UndoSnapshot<UndoPayload>) => {
+    undoStackRef.current = pushSnapshot(undoStackRef.current, snap, MAX_UNDO);
+  };
 
   // ── boot ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +123,7 @@ export function App() {
   const onVaultSelected = useCallback((path: string) => {
     setPhase("ready");
     setRecentVaults((prev) => [path, ...prev.filter((v) => v !== path)].slice(0, 10));
+    undoStackRef.current = [];
     refreshList();
     api.getFavorites().then(setFavoritesState).catch(() => {});
   }, []);
@@ -96,14 +142,20 @@ export function App() {
   // ── open a note ───────────────────────────────────────────────────────────
 
   const openNote = useCallback(
-    async (title: string) => {
+    async (title: string, opts?: { openItemIndex?: number }) => {
       const { content } = await api.readNote(title);
       const parsed = parseMarkdown(content);
       const initial = parsed.length > 0 ? parsed : [newBlock()];
+      let requestedFocus: string | null = null;
+      if (opts?.openItemIndex != null) {
+        const items = collectOpenItems(title, initial);
+        requestedFocus = items[opts.openItemIndex]?.blockId ?? null;
+      }
       skipAutosaveRef.current = true;
       setCurrentTitle(title);
       setBlocks(initial);
-      setFocusedId(initial[0].id);
+      lastSavedBlocksRef.current = initial;
+      setFocusedId(requestedFocus ?? initialFocusId(title, initial));
       setEditingTitle(false);
       const links = await api.getBacklinks(title).catch(() => []);
       setBacklinks(links);
@@ -111,6 +163,73 @@ export function App() {
     },
     [refreshList],
   );
+
+  const closeOpenItem = useCallback(
+    async (title: string, indexInNote: number) => {
+      if (currentTitle === title) {
+        const items = collectOpenItems(title, blocks);
+        const item = items[indexInNote];
+        if (!item) return;
+        setBlocks((prev) => setState(prev, item.blockId, closingState(item.state)));
+      } else {
+        const { content } = await api.readNote(title);
+        const parsed = parseMarkdown(content);
+        const items = collectOpenItems(title, parsed);
+        const item = items[indexInNote];
+        if (!item) return;
+        pushUndo({ label: `close in ${title}`, payload: { kind: "disk", title, content } });
+        const next = setState(parsed, item.blockId, closingState(item.state));
+        await api.writeNote(title, serializeMarkdown(next));
+      }
+    },
+    [blocks, currentTitle],
+  );
+
+  const markCarriedItem = useCallback(
+    async (title: string, indexInNote: number) => {
+      if (currentTitle === title) {
+        const items = collectOpenItems(title, blocks);
+        const item = items[indexInNote];
+        if (!item) return;
+        setBlocks((prev) => setProperty(prev, item.blockId, "carried", "1"));
+      } else {
+        const { content } = await api.readNote(title);
+        const parsed = parseMarkdown(content);
+        const items = collectOpenItems(title, parsed);
+        const item = items[indexInNote];
+        if (!item) return;
+        pushUndo({ label: `carry in ${title}`, payload: { kind: "disk", title, content } });
+        const next = setProperty(parsed, item.blockId, "carried", "1");
+        await api.writeNote(title, serializeMarkdown(next));
+      }
+    },
+    [blocks, currentTitle],
+  );
+
+  const undo = useCallback(async () => {
+    const { snap, rest } = popSnapshot(undoStackRef.current);
+    if (!snap) { setStatusMessage("Nothing to undo"); return; }
+    undoStackRef.current = rest;
+    const p = snap.payload;
+    if (p.kind === "editor") {
+      if (currentTitle === p.title) {
+        skipAutosaveRef.current = true;
+        setBlocks(p.blocks);
+        lastSavedBlocksRef.current = p.blocks;
+      }
+      await api.writeNote(p.title, serializeMarkdown(p.blocks));
+    } else {
+      await api.writeNote(p.title, p.content);
+      if (currentTitle === p.title) {
+        const parsed = parseMarkdown(p.content);
+        skipAutosaveRef.current = true;
+        setBlocks(parsed);
+        lastSavedBlocksRef.current = parsed;
+      }
+    }
+    setStatusMessage(`Undone: ${snap.label}`);
+    await refreshList();
+  }, [currentTitle, refreshList]);
 
   const createOrOpen = useCallback(
     async (title: string) => {
@@ -191,8 +310,14 @@ export function App() {
   useEffect(() => {
     if (!currentTitle) return;
     if (skipAutosaveRef.current) { skipAutosaveRef.current = false; return; }
+    const title = currentTitle;
     const t = setTimeout(() => {
-      api.writeNote(currentTitle, serializeMarkdown(blocks)).then(refreshList);
+      const next = serializeMarkdown(blocks);
+      const prev = serializeMarkdown(lastSavedBlocksRef.current);
+      if (next === prev) return;
+      pushUndo({ label: `edit in ${title}`, payload: { kind: "editor", title, blocks: lastSavedBlocksRef.current } });
+      lastSavedBlocksRef.current = blocks;
+      api.writeNote(title, next).then(refreshList);
     }, 400);
     return () => clearTimeout(t);
   }, [blocks, currentTitle, refreshList]);
@@ -245,20 +370,37 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setShowSearch((s) => !s);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        setShowOpen((s) => !s);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        startNewWeek();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        void undo();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [startNewWeek, undo]);
 
   // ── derived lists ─────────────────────────────────────────────────────────
 
   const weeklyTitles = allTitles.filter(isWeeklyTitle).sort().reverse();
-  const journalTitles = allTitles.filter((t) => t.startsWith("journals/"));
+  const coreTitles = allTitles.filter((t) => t.startsWith("core/")).sort();
   const otherTitles = allTitles.filter(
-    (t) => !t.startsWith("journals/") && !isWeeklyTitle(t) && !favorites.includes(t),
+    (t) => !isWeeklyTitle(t) && !t.startsWith("core/") && !favorites.includes(t),
   );
   const isFav = currentTitle != null && favorites.includes(currentTitle);
+  const currentWeekId = currentTitle ? titleToWeekId(currentTitle) : null;
+  const todayId = todayDayBlockId(currentTitle, blocks);
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -272,6 +414,14 @@ export function App() {
     <div className="app">
       {showSearch && (
         <SearchModal onOpen={createOrOpen} onClose={() => setShowSearch(false)} />
+      )}
+      {showOpen && (
+        <OpenView
+          onOpen={(title, idx) => openNote(title, { openItemIndex: idx })}
+          onCloseItem={closeOpenItem}
+          onMarkCarried={markCarriedItem}
+          onClose={() => setShowOpen(false)}
+        />
       )}
       {showPalette && (
         <CommandPalette
@@ -288,6 +438,7 @@ export function App() {
         <div className="sidebar-top">
           <div className="sidebar-actions">
             <button onClick={() => setShowSearch(true)} title="Search (⌘K)">🔍</button>
+            <button onClick={() => setShowOpen(true)} title="Open items (⌘O)">📋</button>
             <button onClick={() => setShowPalette(true)} title="Run workflow (⌘⇧P)">⚡</button>
             <button onClick={startNewWeek} title="Start / open this week">📆</button>
             <button onClick={openZettel} title="New Zettelkasten note">✦</button>
@@ -305,6 +456,15 @@ export function App() {
         </div>
 
         <div className="sidebar-lists">
+          {coreTitles.length > 0 && (
+            <NoteSection
+              label="📌 Core"
+              titles={coreTitles}
+              current={currentTitle}
+              onOpen={openNote}
+              displayName={(t) => t.replace("core/", "")}
+            />
+          )}
           {favorites.length > 0 && (
             <NoteSection
               label="⭐ Favorites"
@@ -321,15 +481,6 @@ export function App() {
               current={currentTitle}
               onOpen={openNote}
               displayName={(t) => titleToWeekId(t) ?? t}
-            />
-          )}
-          {journalTitles.length > 0 && (
-            <NoteSection
-              label="📅 Journals"
-              titles={journalTitles}
-              current={currentTitle}
-              onOpen={openNote}
-              displayName={(t) => t.replace("journals/", "")}
             />
           )}
           <NoteSection
@@ -368,6 +519,9 @@ export function App() {
                 ) : (
                   <h1 onClick={startRename} title="Click to rename">{currentTitle}</h1>
                 )}
+                {currentWeekId && (
+                  <span className="note-subtitle">{formatWeekRange(currentWeekId)}</span>
+                )}
               </div>
               <div className="note-actions">
                 <button
@@ -393,6 +547,7 @@ export function App() {
               collapsedIds={collapsedIds}
               toggleCollapse={toggleCollapse}
               showProperties={showProperties}
+              todayBlockId={todayId}
             />
 
             {backlinks.length > 0 && (

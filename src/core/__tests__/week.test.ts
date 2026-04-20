@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  WEEKDAY_NAMES,
+  formatWeekRange,
   isWeeklyTitle,
   mostRecentPrevWeek,
   titleToWeekId,
   weekId,
+  weekRange,
   weekTitle,
+  weekdayFor,
 } from "../week";
 
 describe("weekId", () => {
@@ -66,5 +70,56 @@ describe("mostRecentPrevWeek", () => {
     expect(
       mostRecentPrevWeek(["2025-W52", "2026-W01", "2026-W03"], "2026-W02"),
     ).toBe("2026-W01");
+  });
+});
+
+describe("weekdayFor", () => {
+  it("maps Monday..Sunday to Mon..Sun", () => {
+    expect(weekdayFor(new Date(2026, 3, 13))).toBe("Mon");
+    expect(weekdayFor(new Date(2026, 3, 14))).toBe("Tue");
+    expect(weekdayFor(new Date(2026, 3, 15))).toBe("Wed");
+    expect(weekdayFor(new Date(2026, 3, 16))).toBe("Thu");
+    expect(weekdayFor(new Date(2026, 3, 17))).toBe("Fri");
+    expect(weekdayFor(new Date(2026, 3, 18))).toBe("Sat");
+    expect(weekdayFor(new Date(2026, 3, 19))).toBe("Sun");
+  });
+
+  it("WEEKDAY_NAMES has exactly seven entries starting with Mon", () => {
+    expect(WEEKDAY_NAMES).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+  });
+});
+
+describe("weekRange", () => {
+  it("returns Monday–Sunday UTC dates for an ordinary week", () => {
+    const { start, end } = weekRange("2026-W17");
+    expect(start).toEqual(new Date(Date.UTC(2026, 3, 20)));
+    expect(end).toEqual(new Date(Date.UTC(2026, 3, 26)));
+  });
+
+  it("handles the final ISO week of a long year (W53)", () => {
+    const { start, end } = weekRange("2026-W53");
+    // 2026-W53 starts Monday 2026-12-28 and ends Sunday 2027-01-03
+    expect(start).toEqual(new Date(Date.UTC(2026, 11, 28)));
+    expect(end).toEqual(new Date(Date.UTC(2027, 0, 3)));
+  });
+
+  it("throws on malformed input", () => {
+    expect(() => weekRange("bogus")).toThrow();
+  });
+});
+
+describe("formatWeekRange", () => {
+  it("collapses month when start and end share one", () => {
+    expect(formatWeekRange("2026-W17")).toBe("Apr 20 – 26");
+  });
+
+  it("spans months when the week crosses one", () => {
+    // 2026-W18 = Apr 27 – May 3
+    expect(formatWeekRange("2026-W18")).toBe("Apr 27 – May 3");
+  });
+
+  it("spells out both years when the week crosses New Year", () => {
+    // 2026-W53 = Dec 28 2026 – Jan 3 2027
+    expect(formatWeekRange("2026-W53")).toBe("Dec 28, 2026 – Jan 3, 2027");
   });
 });
