@@ -252,6 +252,31 @@ export function insertBlocksAfter(
   return { tree: copy, lastId };
 }
 
+/**
+ * Remove every block whose id is in `ids`, along with its entire subtree.
+ * Returns the id of the block visually preceding the earliest removal
+ * (for focus restoration), or null if nothing was removed or the first
+ * removal was the very first block.
+ */
+export function removeBlocks(
+  blocks: Block[],
+  ids: Set<string>,
+): { tree: Block[]; prevId: string | null } {
+  if (ids.size === 0) return { tree: clone(blocks), prevId: null };
+  const flat = flatten(blocks);
+  const firstIdx = flat.findIndex((f) => ids.has(f.block.id));
+  const prevId = firstIdx > 0 ? flat[firstIdx - 1].block.id : null;
+  const prune = (list: Block[]): Block[] =>
+    list
+      .filter((b) => !ids.has(b.id))
+      .map((b) => ({
+        ...b,
+        properties: { ...b.properties },
+        children: prune(b.children),
+      }));
+  return { tree: prune(blocks), prevId };
+}
+
 export function removeBlock(
   blocks: Block[],
   id: string,
