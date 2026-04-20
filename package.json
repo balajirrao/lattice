@@ -2,6 +2,7 @@
   "name": "lattice",
   "private": true,
   "version": "0.1.4",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
