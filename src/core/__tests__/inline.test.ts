@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractLinks, parseInline } from "../inline";
+import { extractLinks, parseInline, renderedToSourceOffset } from "../inline";
 
 describe("parseInline", () => {
   it("returns single text part for plain text", () => {
@@ -88,3 +88,51 @@ describe("extractLinks", () => {
     expect(extractLinks("**bold** _ital_ #tag")).toEqual([]);
   });
 });
+
+describe("renderedToSourceOffset", () => {
+  it("is identity for plain text", () => {
+    expect(renderedToSourceOffset("hello", 0)).toBe(0);
+    expect(renderedToSourceOffset("hello", 3)).toBe(3);
+    expect(renderedToSourceOffset("hello", 5)).toBe(5);
+  });
+
+  it("clamps offsets past the end to text.length", () => {
+    expect(renderedToSourceOffset("hi", 99)).toBe(2);
+  });
+
+  it("skips wiki-link brackets", () => {
+    // source: "[[Foo]] bar" rendered: "Foo bar"
+    expect(renderedToSourceOffset("[[Foo]] bar", 0)).toBe(2); // before F, inside brackets
+    expect(renderedToSourceOffset("[[Foo]] bar", 3)).toBe(7); // after Foo, skips `]]` and lands on space
+    expect(renderedToSourceOffset("[[Foo]] bar", 4)).toBe(8); // on 'b'
+  });
+
+  it("skips bold markers", () => {
+    // source: "**hi** world" rendered: "hi world"
+    expect(renderedToSourceOffset("**hi** world", 0)).toBe(2);
+    expect(renderedToSourceOffset("**hi** world", 2)).toBe(6); // past closing **
+    expect(renderedToSourceOffset("**hi** world", 3)).toBe(7);
+  });
+
+  it("skips italic markers", () => {
+    // source: "_hi_ x" rendered: "hi x"
+    expect(renderedToSourceOffset("_hi_ x", 0)).toBe(1);
+    expect(renderedToSourceOffset("_hi_ x", 2)).toBe(4); // past closing _
+    expect(renderedToSourceOffset("_hi_ x", 3)).toBe(5);
+  });
+
+  it("tags are identity", () => {
+    // source: "#todo" rendered: "#todo"
+    expect(renderedToSourceOffset("#todo", 0)).toBe(0);
+    expect(renderedToSourceOffset("#todo", 5)).toBe(5);
+  });
+
+  it("handles mixed content", () => {
+    // source: "a [[B]] c" rendered: "a B c"
+    expect(renderedToSourceOffset("a [[B]] c", 0)).toBe(0);
+    expect(renderedToSourceOffset("a [[B]] c", 2)).toBe(4); // on B (past `[[`)
+    expect(renderedToSourceOffset("a [[B]] c", 3)).toBe(7); // past `]]` onto space
+    expect(renderedToSourceOffset("a [[B]] c", 4)).toBe(8); // on c
+  });
+});
+

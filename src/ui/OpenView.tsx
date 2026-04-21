@@ -14,14 +14,28 @@ type Props = {
   onClose: () => void;
 };
 
-type Grouped = { title: string; items: OpenItem[] };
+type Row = { title: string; item: OpenItem; indexInNote: number };
 type TouchKind = "closed" | "carried";
 
 const touchKey = (title: string, idx: number) => `${title}\x00${idx}`;
 
+/** Descending by `created`; nulls last. Tie-break by note title, then index. */
+function compareByCreatedDesc(a: Row, b: Row): number {
+  const ac = a.item.created;
+  const bc = b.item.created;
+  if (ac && bc) {
+    if (ac !== bc) return bc.localeCompare(ac);
+  } else if (ac) {
+    return -1;
+  } else if (bc) {
+    return 1;
+  }
+  const t = a.title.localeCompare(b.title);
+  return t !== 0 ? t : a.indexInNote - b.indexInNote;
+}
+
 export function OpenView({ onOpen, onCloseItem, onMarkCarried, onClose }: Props) {
-  const [groups, setGroups] = useState<Grouped[] | null>(null);
-  const [total, setTotal] = useState(0);
+  const [rows, setRows] = useState<Row[] | null>(null);
   const [selected, setSelected] = useState(0);
   const [touched, setTouched] = useState<Map<string, TouchKind>>(new Map());
 
@@ -29,32 +43,24 @@ export function OpenView({ onOpen, onCloseItem, onMarkCarried, onClose }: Props)
     let cancelled = false;
     (async () => {
       const titles = await api.listNotes();
-      const out: Grouped[] = [];
-      let n = 0;
+      const all: Row[] = [];
       for (const title of titles) {
         const { content } = await api.readNote(title);
         const items = collectOpenItems(title, parseMarkdown(content));
-        if (items.length > 0) {
-          out.push({ title, items });
-          n += items.length;
-        }
+        items.forEach((item, indexInNote) => {
+          all.push({ title, item, indexInNote });
+        });
       }
       if (cancelled) return;
-      out.sort((a, b) => a.title.localeCompare(b.title));
-      setGroups(out);
-      setTotal(n);
+      all.sort(compareByCreatedDesc);
+      setRows(all);
       setSelected(0);
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Build a flat list so arrow keys traverse across groups.
-  const flat: { title: string; item: OpenItem; indexInNote: number }[] = [];
-  for (const g of groups ?? []) {
-    g.items.forEach((item, indexInNote) => {
-      flat.push({ title: g.title, item, indexInNote });
-    });
-  }
+  const flat = rows ?? [];
+  const total = flat.length;
 
   const pick = (title: string, idx: number) => { onOpen(title, idx); onClose(); };
 
@@ -108,59 +114,53 @@ export function OpenView({ onOpen, onCloseItem, onMarkCarried, onClose }: Props)
       >
         <div className="open-header">
           <span className="open-title">Open items</span>
-          {groups !== null && <span className="open-count">{total}</span>}
+          {rows !== null && <span className="open-count">{total}</span>}
         </div>
 
-        {groups === null && <div className="open-empty">Scanning vault…</div>}
-        {groups !== null && groups.length === 0 && (
+        {rows === null && <div className="open-empty">Scanning vault…</div>}
+        {rows !== null && rows.length === 0 && (
           <div className="open-empty">Nothing open.</div>
         )}
-        {groups !== null && groups.length > 0 && (
-          <div className="open-list">
-            {(() => {
-              let cursor = 0;
-              return groups.map((g) => (
-                <section key={g.title} className="open-group">
-                  <div className="open-group-title">{g.title}</div>
-                  <ul>
-                    {g.items.map((it, i) => {
-                      const myIndex = cursor++;
-                      const isSel = myIndex === selected;
-                      const tk = touched.get(touchKey(g.title, i));
-                      const cls = [
-                        isSel ? "selected" : "",
-                        tk === "closed" ? "touched-closed" : "",
-                        tk === "carried" ? "touched-carried" : "",
-                      ].filter(Boolean).join(" ");
-                      return (
-                        <li key={`${g.title}-${i}`} className={cls}>
-                          <button
-                            onClick={() => pick(g.title, i)}
-                            onMouseEnter={() => setSelected(myIndex)}
-                          >
-                            <span className={`state-pill state-${it.state.toLowerCase()}`}>
-                              {tk === "closed" ? "✓" : tk === "carried" ? "↺" : stateGlyph(it.state)}
-                            </span>
-                            <span className="open-body">
-                              {it.path.length > 0 && (
-                                <span className="open-crumbs">
-                                  {it.path.join(" › ")}
-                                  <span className="open-crumbs-sep"> › </span>
-                                </span>
-                              )}
-                              <span className="open-text">
-                                {it.text || <em className="open-placeholder">(empty)</em>}
-                              </span>
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              ));
-            })()}
-          </div>
+        {rows !== null && rows.length > 0 && (
+          <ul className="open-list open-flat">
+            {flat.map((row, i) => {
+              const { title, item: it, indexInNote } = row;
+              const isSel = i === selected;
+              const tk = touched.get(touchKey(title, indexInNote));
+              const cls = [
+                isSel ? "selected" : "",
+                tk === "closed" ? "touched-closed" : "",
+                tk === "carried" ? "touched-carried" : "",
+              ].filter(Boolean).join(" ");
+              return (
+                <li key={`${title}-${indexInNote}`} className={cls}>
+                  <button
+                    onClick={() => pick(title, indexInNote)}
+                    onMouseEnter={() => setSelected(i)}
+                  >
+                    <span className={`state-pill state-${it.state.toLowerCase()}`}>
+                      {tk === "closed" ? "✓" : tk === "carried" ? "↺" : stateGlyph(it.state)}
+                    </span>
+                    <span className="open-body">
+                      <span className="open-crumbs">
+                        {title}
+                        {it.path.length > 0 && (
+                          <>
+                            <span className="open-crumbs-sep"> › </span>
+                            {it.path.join(" › ")}
+                          </>
+                        )}
+                        <span className="open-crumbs-sep"> › </span>
+                      </span>
+                      <span className="open-text">
+                        {it.text || <em className="open-placeholder">(empty)</em>}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
 
         <div className="open-footer">

@@ -77,6 +77,8 @@ export function App() {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const { collapsedIds, toggleCollapse, expandIds } = useCollapse();
+  const [pendingFind, setPendingFind] = useState<{ query: string; nonce: number } | null>(null);
+  const findNonceRef = useRef(0);
 
   const [newTitle, setNewTitle] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -142,7 +144,7 @@ export function App() {
   // ── open a note ───────────────────────────────────────────────────────────
 
   const openNote = useCallback(
-    async (title: string, opts?: { openItemIndex?: number }) => {
+    async (title: string, opts?: { openItemIndex?: number; findQuery?: string }) => {
       const { content } = await api.readNote(title);
       const parsed = parseMarkdown(content);
       const initial = parsed.length > 0 ? parsed : [newBlock()];
@@ -155,8 +157,14 @@ export function App() {
       setCurrentTitle(title);
       setBlocks(initial);
       lastSavedBlocksRef.current = initial;
-      setFocusedId(requestedFocus ?? initialFocusId(title, initial));
+      // If we're jumping to a search hit, skip the weekday / first-block
+      // focus — the Outliner will scroll & focus the matching block.
+      setFocusedId(opts?.findQuery ? null : (requestedFocus ?? initialFocusId(title, initial)));
       setEditingTitle(false);
+      if (opts?.findQuery) {
+        findNonceRef.current += 1;
+        setPendingFind({ query: opts.findQuery, nonce: findNonceRef.current });
+      }
       const links = await api.getBacklinks(title).catch(() => []);
       setBacklinks(links);
       await refreshList();
@@ -413,7 +421,16 @@ export function App() {
   return (
     <div className="app">
       {showSearch && (
-        <SearchModal onOpen={createOrOpen} onClose={() => setShowSearch(false)} />
+        <SearchModal
+          onOpen={(title, query) => {
+            void (async () => {
+              const existing = await api.listNotes().catch(() => [] as string[]);
+              if (!existing.includes(title)) await api.writeNote(title, "");
+              await openNote(title, query ? { findQuery: query } : undefined);
+            })();
+          }}
+          onClose={() => setShowSearch(false)}
+        />
       )}
       {showOpen && (
         <OpenView
@@ -549,6 +566,7 @@ export function App() {
               expandIds={expandIds}
               showProperties={showProperties}
               todayBlockId={todayId}
+              pendingFind={pendingFind}
             />
 
             {backlinks.length > 0 && (

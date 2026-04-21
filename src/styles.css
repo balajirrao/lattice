@@ -299,24 +299,21 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
   padding: 1px 6px; border: 1px solid var(--border); border-radius: 10px;
 }
 .open-empty { padding: 24px; color: var(--muted); text-align: center; font-size: 13px; }
-.open-list { overflow-y: auto; padding: 4px 0; }
-.open-group { padding: 6px 0; }
-.open-group-title {
-  font-size: 11px; color: var(--muted); text-transform: uppercase;
-  letter-spacing: .05em; padding: 4px 16px 2px;
-}
-.open-group ul { list-style: none; padding: 0; margin: 0; }
-.open-group li button {
+.open-list { overflow-y: auto; padding: 4px 0; list-style: none; margin: 0; }
+.open-list li button {
   display: flex; align-items: center; gap: 10px;
   width: 100%; text-align: left; padding: 6px 16px;
   font-size: 14px;
 }
-.open-group li.selected button,
-.open-group li button:hover { background: #2a2b35; }
-.open-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open-list li.selected button,
+.open-list li button:hover { background: #2a2b35; }
+.open-body { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; gap: 4px; }
+.open-crumbs { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+.open-crumbs-sep { color: var(--muted); opacity: 0.5; margin: 0 2px; }
+.open-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .open-placeholder { color: var(--muted); font-style: italic; }
-.open-group li.touched-closed button,
-.open-group li.touched-carried button {
+.open-list li.touched-closed button,
+.open-list li.touched-carried button {
   text-decoration: line-through;
   opacity: 0.55;
 }

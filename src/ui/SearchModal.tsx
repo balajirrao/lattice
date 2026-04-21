@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as api from "./api";
 
 type Props = {
-  onOpen: (title: string) => void;
+  onOpen: (title: string, query: string) => void;
   onClose: () => void;
 };
 
@@ -26,7 +26,7 @@ export function SearchModal({ onOpen, onClose }: Props) {
     return () => clearTimeout(t);
   }, [query]);
 
-  const pick = (title: string) => { onOpen(title); onClose(); };
+  const pick = (title: string) => { onOpen(title, query.trim()); onClose(); };
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { onClose(); return; }

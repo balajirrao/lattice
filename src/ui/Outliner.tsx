@@ -16,6 +16,7 @@ import {
   parseInline,
   parseMarkdown,
   regenerateIds,
+  renderedToSourceOffset,
   removeBlock,
   removeBlocks,
   selectionRoots,
@@ -38,6 +39,13 @@ type OutlinerProps = {
   showProperties: boolean;
   /** Block to visually mark as "today" (e.g. Monday block in this week's note). */
   todayBlockId?: string | null;
+  /**
+   * When set (e.g. after picking a result in the ⌘K modal), the in-note
+   * find bar opens pre-populated with the query so the user lands at the
+   * exact matching block. `nonce` bumps on every trigger so the effect
+   * re-fires even if the query text is unchanged.
+   */
+  pendingFind?: { query: string; nonce: number } | null;
 };
 
 type SearchContext = {
@@ -45,6 +53,54 @@ type SearchContext = {
   matchSet: Set<string>;
   currentId: string | null;
 };
+
+/**
+ * Given a click point, compute the caret offset (in characters) within
+ * `root`'s rendered textContent. Returns null if the click didn't land
+ * inside any text node belonging to `root`.
+ */
+function caretOffsetInElement(
+  root: HTMLElement,
+  clientX: number,
+  clientY: number,
+): number | null {
+  type DocAny = Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => {
+      offsetNode: Node;
+      offset: number;
+    } | null;
+  };
+  const doc = document as DocAny;
+  let node: Node | null = null;
+  let offset = 0;
+  if (doc.caretRangeFromPoint) {
+    const r = doc.caretRangeFromPoint(clientX, clientY);
+    if (!r) return null;
+    node = r.startContainer;
+    offset = r.startOffset;
+  } else if (doc.caretPositionFromPoint) {
+    const p = doc.caretPositionFromPoint(clientX, clientY);
+    if (!p) return null;
+    node = p.offsetNode;
+    offset = p.offset;
+  } else {
+    return null;
+  }
+  if (!node || !root.contains(node)) return null;
+  // If the hit landed on an element node (e.g. the preview itself or a
+  // ::before pseudo), walk to the nearest preceding text node inside it.
+  let cum = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const tn = walker.currentNode as Text;
+    if (tn === node) return cum + offset;
+    cum += tn.nodeValue?.length ?? 0;
+  }
+  // Fallback: offset was relative to an element, not a text node. Use the
+  // accumulated text length (i.e. end of everything we traversed).
+  return cum;
+}
 
 /** Flatten blocks in visual order, skipping children of collapsed blocks. */
 function visibleFlat(blocks: Block[], collapsed: CollapsedIds): Block[] {
@@ -121,6 +177,13 @@ export function Outliner(props: OutlinerProps) {
       el?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
   }, [currentMatchId]);
+
+  // Seed the find bar when the app forwards a ⌘K query.
+  useEffect(() => {
+    if (!props.pendingFind) return;
+    setSearchOpen(true);
+    setSearchQuery(props.pendingFind.query);
+  }, [props.pendingFind]);
 
   // ⌘F / Ctrl+F toggles the search bar.
   useEffect(() => {
@@ -365,13 +428,21 @@ function BlockRow({
   ...props
 }: BlockRowSharedProps & { block: Block }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingCaretRef = useRef<number | null>(null);
   const isFocused = props.focusedId === block.id;
   const isCollapsed = props.collapsedIds.has(block.id);
   const hasChildren = block.children.length > 0;
   const isSelected = props.selectedIds.has(block.id);
 
   useEffect(() => {
-    if (isFocused && inputRef.current) inputRef.current.focus();
+    if (isFocused && inputRef.current) {
+      inputRef.current.focus();
+      if (pendingCaretRef.current != null) {
+        const pos = Math.min(pendingCaretRef.current, inputRef.current.value.length);
+        pendingCaretRef.current = null;
+        inputRef.current.setSelectionRange(pos, pos);
+      }
+    }
   }, [isFocused]);
 
   // Auto-grow the textarea so long lines wrap across multiple visual rows.
@@ -507,7 +578,18 @@ function BlockRow({
             onBlur={() => { if (props.focusedId === block.id) props.setFocusedId(null); }}
           />
         ) : (
-          <div className="block-preview" onClick={() => props.setFocusedId(block.id)}>
+          <div
+            className="block-preview"
+            onMouseDown={(e) => {
+              // Capture the caret position now, while the preview is still
+              // in the DOM — after setFocusedId the preview unmounts.
+              const root = e.currentTarget as HTMLElement;
+              const rendered = caretOffsetInElement(root, e.clientX, e.clientY);
+              pendingCaretRef.current =
+                rendered == null ? null : renderedToSourceOffset(block.text, rendered);
+            }}
+            onClick={() => props.setFocusedId(block.id)}
+          >
             {block.text === "" ? (
               <span className="block-placeholder" />
             ) : (
