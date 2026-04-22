@@ -236,6 +236,31 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .wiki-link::after  { content: "]]"; opacity: 0.45; }
 .wiki-link:hover { text-decoration: underline; }
 .inline-tag { color: var(--tag); }
+.inline-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: #2a2b35;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  color: #e8b86d;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.inline-code-block {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: #1d1e25;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  color: #e8b86d;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.inline-code-block code { background: none; border: none; padding: 0; color: inherit; font: inherit; }
 
 /* ── Update banner ── */
 .update-banner {

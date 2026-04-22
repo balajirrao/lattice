@@ -656,6 +656,12 @@ function renderInline(
       case "bold":   return <strong key={i}>{hl(part.value, i)}</strong>;
       case "italic": return <em key={i}>{hl(part.value, i)}</em>;
       case "tag":    return <span key={i} className="inline-tag">#{hl(part.value, i)}</span>;
+      case "code":
+        return part.block ? (
+          <pre key={i} className="inline-code-block"><code>{hl(part.value, i)}</code></pre>
+        ) : (
+          <code key={i} className="inline-code">{hl(part.value, i)}</code>
+        );
       case "url":
         return (
           <a

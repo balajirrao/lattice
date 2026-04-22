@@ -96,6 +96,55 @@ describe("parseInline", () => {
     const parts = parseInline("ftp://x.com");
     expect(parts.every((p) => p.type !== "url")).toBe(true);
   });
+
+  it("parses inline `code`", () => {
+    expect(parseInline("`x = 1`")).toEqual([
+      { type: "code", value: "x = 1", block: false },
+    ]);
+  });
+
+  it("parses inline code mixed with text", () => {
+    expect(parseInline("call `foo()` now")).toEqual([
+      { type: "text", value: "call " },
+      { type: "code", value: "foo()", block: false },
+      { type: "text", value: " now" },
+    ]);
+  });
+
+  it("does not parse markdown inside inline code", () => {
+    expect(parseInline("`[[A]] **b**`")).toEqual([
+      { type: "code", value: "[[A]] **b**", block: false },
+    ]);
+  });
+
+  it("treats unclosed backtick as plain text", () => {
+    expect(parseInline("`unclosed")).toEqual([{ type: "text", value: "`unclosed" }]);
+  });
+
+  it("parses ```triple-backtick``` as a block code span", () => {
+    expect(parseInline("```let x = 1;```")).toEqual([
+      { type: "code", value: "let x = 1;", block: true },
+    ]);
+  });
+
+  it("triple-backtick takes priority over single-backtick", () => {
+    // Without triple-first matching, "```a```" would be parsed as
+    // a single-backtick span containing "``a``".
+    expect(parseInline("```a```")).toEqual([
+      { type: "code", value: "a", block: true },
+    ]);
+  });
+
+  it("triple-backticks span newlines for multi-line code", () => {
+    expect(parseInline("```\nline1\nline2\n```")).toEqual([
+      { type: "code", value: "\nline1\nline2\n", block: true },
+    ]);
+  });
+
+  it("inline code does not span newlines", () => {
+    const parts = parseInline("`a\nb`");
+    expect(parts.every((p) => p.type !== "code")).toBe(true);
+  });
 });
 
 describe("extractLinks", () => {
