@@ -114,3 +114,46 @@ describe("parse/serialize roundtrip", () => {
     expect(serializeMarkdown(parseMarkdown(md))).toBe(md);
   });
 });
+
+describe("multi-line block text (code fences)", () => {
+  it("serializes a multi-line block using `|` continuations", () => {
+    const tree = parseMarkdown("- code");
+    tree[0].text = "```js\nconst x = 1;\n```";
+    expect(serializeMarkdown(tree)).toBe(
+      "-```js\n| const x = 1;\n| ```\n",
+    );
+  });
+
+  it("parses `|` continuations back into one block with newlines", () => {
+    const md = "-```js\n| const x = 1;\n| ```\n";
+    const tree = parseMarkdown(md);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].text).toBe("```js\nconst x = 1;\n```");
+  });
+
+  it("roundtrips a fenced code block", () => {
+    const src = "-```py\n| def f():\n|     return 1\n| ```\n";
+    expect(serializeMarkdown(parseMarkdown(src))).toBe(src);
+  });
+
+  it("nests continuations under the correct parent", () => {
+    const md = [
+      "- parent",
+      "  -```js",
+      "  | 1 + 1",
+      "  | ```",
+      "  - sibling",
+    ].join("\n");
+    const tree = parseMarkdown(md);
+    expect(tree[0].children).toHaveLength(2);
+    expect(tree[0].children[0].text).toBe("```js\n1 + 1\n```");
+    expect(tree[0].children[1].text).toBe("sibling");
+  });
+
+  it("preserves a blank line inside a code block", () => {
+    const src = "-```\n| a\n| \n| b\n| ```\n";
+    const tree = parseMarkdown(src);
+    expect(tree[0].text).toBe("```\na\n\nb\n```");
+    expect(serializeMarkdown(tree)).toBe(src);
+  });
+});

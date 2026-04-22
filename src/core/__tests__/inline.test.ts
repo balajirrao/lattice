@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractLinks, parseInline, renderedToSourceOffset } from "../inline";
+import {
+  extractLinks,
+  parseCodeBlock,
+  parseInline,
+  renderedToSourceOffset,
+} from "../inline";
 
 describe("parseInline", () => {
   it("returns single text part for plain text", () => {
@@ -96,6 +101,76 @@ describe("parseInline", () => {
     const parts = parseInline("ftp://x.com");
     expect(parts.every((p) => p.type !== "url")).toBe(true);
   });
+
+  it("parses `inline code`", () => {
+    expect(parseInline("`npm test`")).toEqual([{ type: "code", value: "npm test" }]);
+  });
+
+  it("parses inline code between other text", () => {
+    expect(parseInline("run `npm test` to verify")).toEqual([
+      { type: "text", value: "run " },
+      { type: "code", value: "npm test" },
+      { type: "text", value: " to verify" },
+    ]);
+  });
+
+  it("inline code suppresses other inline markers", () => {
+    // **bold** inside a code span stays literal.
+    expect(parseInline("`**not bold**`")).toEqual([
+      { type: "code", value: "**not bold**" },
+    ]);
+  });
+
+  it("treats unclosed single backtick as plain text", () => {
+    expect(parseInline("a `unclosed")).toEqual([
+      { type: "text", value: "a `unclosed" },
+    ]);
+  });
+
+  it("handles adjacent inline code spans", () => {
+    expect(parseInline("`a``b`")).toEqual([
+      { type: "code", value: "a" },
+      { type: "code", value: "b" },
+    ]);
+  });
+});
+
+describe("parseCodeBlock", () => {
+  it("returns null for plain text", () => {
+    expect(parseCodeBlock("hello")).toBeNull();
+  });
+
+  it("returns null without a closing fence", () => {
+    expect(parseCodeBlock("```js\nconst x = 1;")).toBeNull();
+  });
+
+  it("parses a multi-line fenced block with language", () => {
+    expect(parseCodeBlock("```js\nconst x = 1;\nconsole.log(x);\n```")).toEqual({
+      lang: "js",
+      code: "const x = 1;\nconsole.log(x);",
+    });
+  });
+
+  it("parses a fenced block without language", () => {
+    expect(parseCodeBlock("```\nraw\n```")).toEqual({ lang: "", code: "raw" });
+  });
+
+  it("parses a single-line fenced block", () => {
+    expect(parseCodeBlock("```js\n1+1\n```")).toEqual({ lang: "js", code: "1+1" });
+  });
+
+  it("does not match inline backticks without newline after opener", () => {
+    // Inline `code` on a single line isn't a fenced block.
+    expect(parseCodeBlock("`hi`")).toBeNull();
+  });
+
+  it("preserves indentation inside the code body", () => {
+    const src = "```py\ndef f():\n    return 1\n```";
+    expect(parseCodeBlock(src)).toEqual({
+      lang: "py",
+      code: "def f():\n    return 1",
+    });
+  });
 });
 
 describe("extractLinks", () => {
@@ -156,6 +231,13 @@ describe("renderedToSourceOffset", () => {
     expect(renderedToSourceOffset("a [[B]] c", 2)).toBe(4); // on B (past `[[`)
     expect(renderedToSourceOffset("a [[B]] c", 3)).toBe(7); // past `]]` onto space
     expect(renderedToSourceOffset("a [[B]] c", 4)).toBe(8); // on c
+  });
+
+  it("skips inline-code backticks", () => {
+    // source: "`hi` x" rendered: "hi x"
+    expect(renderedToSourceOffset("`hi` x", 0)).toBe(1); // on h (past opening `)
+    expect(renderedToSourceOffset("`hi` x", 2)).toBe(4); // past closing ` onto space
+    expect(renderedToSourceOffset("`hi` x", 3)).toBe(5); // on x
   });
 });
 
