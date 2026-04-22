@@ -13,6 +13,7 @@ import {
   moveUp,
   newBlock,
   outdent,
+  parseCodeBlock,
   parseInline,
   parseMarkdown,
   regenerateIds,
@@ -461,6 +462,11 @@ function BlockRow({
     } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       props.setBlocks(setState(props.blocks, block.id, cycleState(block.state)));
+    } else if (e.key === "Enter" && e.shiftKey) {
+      // Let the textarea insert a literal newline (needed for code blocks
+      // and any prose that wants multi-line content inside one block).
+      // onChange will capture the updated value.
+      return;
     } else if (e.key === "Enter") {
       e.preventDefault();
       // Split at the caret: text before stays in the current block, text
@@ -601,7 +607,7 @@ function BlockRow({
             {block.text === "" ? (
               <span className="block-placeholder" />
             ) : (
-              renderInline(block.text, props.onOpenLink, props.search?.query ?? null)
+              renderBlockContent(block.text, props.onOpenLink, props.search?.query ?? null)
             )}
           </div>
         )}
@@ -639,6 +645,24 @@ function formatPropValue(v: string): string {
   return m ? `${m[1]} ${m[2]}` : v;
 }
 
+function renderBlockContent(
+  text: string,
+  onOpenLink: (t: string) => void,
+  highlight: string | null,
+) {
+  const fenced = parseCodeBlock(text);
+  if (fenced) {
+    const hl = highlightText(fenced.code, highlight, 0);
+    return (
+      <pre className={`code-block${fenced.lang ? ` lang-${fenced.lang}` : ""}`}>
+        {fenced.lang && <span className="code-lang">{fenced.lang}</span>}
+        <code>{hl}</code>
+      </pre>
+    );
+  }
+  return renderInline(text, onOpenLink, highlight);
+}
+
 function renderInline(
   text: string,
   onOpenLink: (t: string) => void,
@@ -656,6 +680,7 @@ function renderInline(
       case "bold":   return <strong key={i}>{hl(part.value, i)}</strong>;
       case "italic": return <em key={i}>{hl(part.value, i)}</em>;
       case "tag":    return <span key={i} className="inline-tag">#{hl(part.value, i)}</span>;
+      case "code":   return <code key={i} className="inline-code">{hl(part.value, i)}</code>;
       case "url":
         return (
           <a
