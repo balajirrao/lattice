@@ -24,6 +24,7 @@ import {
   setState,
   updateText,
 } from "../core";
+import * as api from "./api";
 
 export type CollapsedIds = { has(id: string): boolean };
 
@@ -493,7 +494,14 @@ function BlockRow({
     } else if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       const r = indent(props.blocks, block.id);
-      if (r) { props.setBlocks(r.tree); props.setFocusedId(r.id); }
+      if (r) {
+        props.setBlocks(r.tree);
+        props.setFocusedId(r.id);
+        // The new parent may have been collapsed (collapsed-by-default
+        // hides its freshly-added child). Expand it so the user can see
+        // what they just indented.
+        props.expandIds([r.parentId]);
+      }
     } else if (e.key === "Tab" && e.shiftKey) {
       e.preventDefault();
       const r = outdent(props.blocks, block.id);
@@ -648,6 +656,24 @@ function renderInline(
       case "bold":   return <strong key={i}>{hl(part.value, i)}</strong>;
       case "italic": return <em key={i}>{hl(part.value, i)}</em>;
       case "tag":    return <span key={i} className="inline-tag">#{hl(part.value, i)}</span>;
+      case "url":
+        return (
+          <a
+            key={i}
+            className="ext-link"
+            href={part.value}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              // Stop the preview's click-to-focus and open externally
+              // instead of navigating the webview.
+              e.preventDefault();
+              e.stopPropagation();
+              void api.openExternal(part.value);
+            }}
+          >
+            {hl(part.value, i)}
+          </a>
+        );
       default:       return <span key={i}>{hl(part.value, i)}</span>;
     }
   });

@@ -205,6 +205,14 @@ describe("indent", () => {
     expect(flat.map((f) => f.depth)).toEqual([0, 1, 2, 1, 1]);
   });
 
+  it("returns the new parent's id", () => {
+    const tree = sample();
+    const b = tree[1];
+    const a = tree[0];
+    const result = indent(tree, b.id);
+    expect(result?.parentId).toBe(a.id);
+  });
+
   it("returns null when block is the first sibling", () => {
     const tree = sample();
     expect(indent(tree, tree[0].id)).toBeNull();

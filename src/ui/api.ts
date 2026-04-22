@@ -39,3 +39,8 @@ export const getBacklinks = (title: string) =>
 export const getFavorites = () => invoke<string[]>("get_favorites");
 export const setFavorites = (favorites: string[]) =>
   invoke<void>("set_favorites", { favorites });
+
+// ── external links ───────────────────────────────────────────────────────────
+
+export const openExternal = (url: string) =>
+  invoke<void>("open_external", { url });

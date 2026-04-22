@@ -95,6 +95,41 @@ fn get_backlinks(state: State<'_, AppState>, title: String) -> Result<Vec<String
     state.notes()?.backlinks(&title).map_err(|e| e.to_string())
 }
 
+// ── external links ───────────────────────────────────────────────────────────
+
+/// Open an http(s) URL in the user's default browser. We avoid adding the
+/// full opener plugin and just shell out to the platform helper. The
+/// scheme check keeps this command from being used to launch arbitrary
+/// binaries.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("only http/https URLs are allowed".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // ── favorites ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -142,6 +177,7 @@ fn main() {
             get_backlinks,
             get_favorites,
             set_favorites,
+            open_external,
         ])
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {

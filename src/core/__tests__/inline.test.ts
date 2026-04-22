@@ -73,6 +73,29 @@ describe("parseInline", () => {
   it("supports hyphenated tags", () => {
     expect(parseInline("#my-tag")).toEqual([{ type: "tag", value: "my-tag" }]);
   });
+
+  it("parses bare http URL", () => {
+    expect(parseInline("http://x.com")).toEqual([{ type: "url", value: "http://x.com" }]);
+  });
+
+  it("parses bare https URL", () => {
+    expect(parseInline("https://example.com/p?q=1")).toEqual([
+      { type: "url", value: "https://example.com/p?q=1" },
+    ]);
+  });
+
+  it("strips trailing sentence punctuation from URL", () => {
+    expect(parseInline("see https://x.com.")).toEqual([
+      { type: "text", value: "see " },
+      { type: "url", value: "https://x.com" },
+      { type: "text", value: "." },
+    ]);
+  });
+
+  it("does not match non-http scheme as URL", () => {
+    const parts = parseInline("ftp://x.com");
+    expect(parts.every((p) => p.type !== "url")).toBe(true);
+  });
 });
 
 describe("extractLinks", () => {

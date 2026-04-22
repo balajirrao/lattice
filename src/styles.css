@@ -229,6 +229,8 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .block-match-current > .block-row { outline: 1px solid var(--accent); border-radius: 3px; }
 
 /* Inline formatting */
+.ext-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.ext-link:hover { text-decoration: underline; opacity: 0.85; }
 .wiki-link { color: var(--accent); cursor: pointer; text-decoration: none; }
 .wiki-link::before { content: "[["; opacity: 0.45; }
 .wiki-link::after  { content: "]]"; opacity: 0.45; }

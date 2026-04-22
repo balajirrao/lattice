@@ -159,14 +159,17 @@ export function insertAfter(
   return { tree: copy, id: newBlock.id };
 }
 
-export function indent(blocks: Block[], id: string): { tree: Block[]; id: string } | null {
+export function indent(
+  blocks: Block[],
+  id: string,
+): { tree: Block[]; id: string; parentId: string } | null {
   const copy = clone(blocks);
   const loc = locate(copy, id);
   if (!loc || loc.index === 0) return null;
   const prev = loc.list[loc.index - 1];
   const [moved] = loc.list.splice(loc.index, 1);
   prev.children.push(moved);
-  return { tree: copy, id };
+  return { tree: copy, id, parentId: prev.id };
 }
 
 export function outdent(blocks: Block[], id: string): { tree: Block[]; id: string } | null {
