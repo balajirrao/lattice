@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.10). Must match version in package.json.'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +19,25 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.ref_name }}"
+          fi
+          case "$tag" in
+            v*) ;;
+            *) echo "::error::Tag '$tag' must start with 'v'"; exit 1 ;;
+          esac
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$tag" != "v$pkg_version" ]; then
+            echo "::error::Tag '$tag' does not match package.json version '$pkg_version'"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -46,8 +71,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
+          tagName: ${{ steps.tag.outputs.tag }}
+          releaseName: ${{ steps.tag.outputs.tag }}
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
