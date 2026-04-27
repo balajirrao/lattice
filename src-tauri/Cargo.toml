@@ -1,6 +1,6 @@
 [package]
 name = "lattice"
-version = "0.1.10"
+version = "0.1.11"
 description = "A tiny outliner note app."
 license = "MIT"
 edition = "2021"
