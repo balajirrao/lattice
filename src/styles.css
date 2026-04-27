@@ -100,6 +100,13 @@ kbd { font: inherit; background: #2a2b35; border: 1px solid var(--border); borde
 .note-list button:hover { background: #2a2b35; }
 .note-list button.active { background: #33343d; color: var(--accent); }
 
+/* ── Folder tree rows ── */
+.note-tree .folder-row { color: var(--muted); }
+.note-tree .folder-row:hover { color: var(--fg); }
+.note-tree .folder-caret {
+  display: inline-block; width: 10px; font-size: 10px; margin-right: 4px; color: var(--muted);
+}
+
 .sidebar-footer { padding: 8px 10px; border-top: 1px solid var(--border); }
 .vault-btn { font-size: 11px; color: var(--muted); width: 100%; text-align: left; padding: 4px 0; }
 .vault-btn:hover { color: var(--fg); }

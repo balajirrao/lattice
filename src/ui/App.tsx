@@ -3,7 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type Block,
+  type FolderTreeNode,
   type UndoSnapshot,
+  buildFolderTree,
   closingState,
   collectOpenItems,
   formatWeekRange,
@@ -474,12 +476,12 @@ export function App() {
 
         <div className="sidebar-lists">
           {coreTitles.length > 0 && (
-            <NoteSection
+            <NoteTreeSection
               label="📌 Core"
               titles={coreTitles}
               current={currentTitle}
               onOpen={openNote}
-              displayName={(t) => t.replace("core/", "")}
+              stripPrefix="core/"
             />
           )}
           {favorites.length > 0 && (
@@ -500,12 +502,11 @@ export function App() {
               displayName={(t) => titleToWeekId(t) ?? t}
             />
           )}
-          <NoteSection
+          <NoteTreeSection
             label="📝 Notes"
             titles={otherTitles}
             current={currentTitle}
             onOpen={openNote}
-            displayName={(t) => t}
           />
         </div>
 
@@ -649,5 +650,97 @@ function NoteSection({
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Section that renders titles as a folder tree. Titles like `a/b/c`
+ * become folder `a` → folder `b` → leaf `c`. Folders collapse
+ * independently (each remembers its own state for the session).
+ */
+function NoteTreeSection({
+  label, titles, current, onOpen, stripPrefix,
+}: {
+  label: string;
+  titles: string[];
+  current: string | null;
+  onOpen: (t: string) => void;
+  stripPrefix?: string;
+}) {
+  const [collapsed, setCollapsed] = useState(true);
+  const tree = useMemo(
+    () => buildFolderTree(titles, stripPrefix ? { stripPrefix } : undefined),
+    [titles, stripPrefix],
+  );
+  return (
+    <section className="note-section">
+      <button className="section-header" onClick={() => setCollapsed((c) => !c)}>
+        {collapsed ? "▶" : "▼"} {label}
+      </button>
+      {!collapsed && (
+        <ul className="note-list note-tree">
+          {tree.map((node) => (
+            <FolderTreeRow
+              key={node.kind === "folder" ? `f:${node.path}` : `l:${node.title}`}
+              node={node}
+              depth={0}
+              current={current}
+              onOpen={onOpen}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function FolderTreeRow({
+  node, depth, current, onOpen,
+}: {
+  node: FolderTreeNode;
+  depth: number;
+  current: string | null;
+  onOpen: (t: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // 14px base padding (matches .note-list button) + 12px per depth level.
+  const pad = 14 + depth * 12;
+  if (node.kind === "leaf") {
+    return (
+      <li>
+        <button
+          className={node.title === current ? "active" : ""}
+          style={{ paddingLeft: pad }}
+          onClick={() => onOpen(node.title)}
+          title={node.title}
+        >
+          {node.name}
+        </button>
+      </li>
+    );
+  }
+  return (
+    <>
+      <li>
+        <button
+          className="folder-row"
+          style={{ paddingLeft: pad }}
+          onClick={() => setOpen((o) => !o)}
+          title={node.path}
+        >
+          <span className="folder-caret">{open ? "▾" : "▸"}</span>
+          {node.name}
+        </button>
+      </li>
+      {open && node.children.map((child) => (
+        <FolderTreeRow
+          key={child.kind === "folder" ? `f:${child.path}` : `l:${child.title}`}
+          node={child}
+          depth={depth + 1}
+          current={current}
+          onOpen={onOpen}
+        />
+      ))}
+    </>
   );
 }
