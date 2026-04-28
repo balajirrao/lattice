@@ -6,6 +6,7 @@ import {
   ancestorIdsOf,
   cycleFamily,
   cycleState,
+  findByRefId,
   indent,
   insertAfter,
   insertBlocksAfter,
@@ -17,6 +18,7 @@ import {
   parseInline,
   parseMarkdown,
   regenerateIds,
+  renumberPastedRefs,
   renderedToSourceOffset,
   removeBlock,
   removeBlocks,
@@ -25,6 +27,7 @@ import {
   setState,
   updateText,
 } from "../core";
+import { BlockRefPicker, buildCandidates } from "./BlockRefPicker";
 import * as api from "./api";
 
 export type CollapsedIds = { has(id: string): boolean };
@@ -315,7 +318,7 @@ export function Outliner(props: OutlinerProps) {
       const parsed = parseMarkdown(text);
       if (parsed.length === 0) return;
       e.preventDefault();
-      const fresh = regenerateIds(parsed);
+      const fresh = renumberPastedRefs(blocks, regenerateIds(parsed));
       const { tree, lastId } = insertBlocksAfter(blocks, focusedId, fresh);
       setBlocks(tree);
       setSelectedIds(new Set());
@@ -325,7 +328,21 @@ export function Outliner(props: OutlinerProps) {
     return () => document.removeEventListener("paste", onPaste);
   }, [blocks, focusedId, setBlocks, setFocusedId]);
 
-  const childProps = { ...props, selectedIds, search: searchCtx };
+  const onJumpToRef = (num: number) => {
+    const target = findByRefId(blocks, num);
+    if (!target) return;
+    const ancs = ancestorIdsOf(blocks, target.id);
+    if (ancs.length > 0) expandIds(ancs);
+    setFocusedId(target.id);
+    requestAnimationFrame(() => {
+      const el = document.querySelector(
+        `[data-block-id="${target.id}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  };
+
+  const childProps = { ...props, selectedIds, search: searchCtx, onJumpToRef };
 
   return (
     <div
@@ -412,6 +429,7 @@ function NoteSearchBar({
 type BlockRowSharedProps = OutlinerProps & {
   selectedIds: Set<string>;
   search: SearchContext | null;
+  onJumpToRef: (num: number) => void;
 };
 type BlockListProps = BlockRowSharedProps & { list: Block[] };
 
@@ -436,6 +454,42 @@ function BlockRow({
   const hasChildren = block.children.length > 0;
   const isSelected = props.selectedIds.has(block.id);
 
+  // ── block-ref picker state ────────────────────────────────────────────────
+  // Open when user types `$`. `dollarPos` is the index of the `$` in the
+  // textarea value; `query` is the digits typed after it. Closes on Esc,
+  // when caret leaves the trigger range, or when user types non-digits.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerDollarPos, setPickerDollarPos] = useState(0);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [pickerSel, setPickerSel] = useState(0);
+  const closePicker = () => { setPickerOpen(false); setPickerQuery(""); setPickerSel(0); };
+
+  const pickerCandidates = useMemo(
+    () => pickerOpen ? buildCandidates(props.blocks, pickerQuery, block.id) : [],
+    [pickerOpen, pickerQuery, props.blocks, block.id],
+  );
+
+  useEffect(() => { setPickerSel(0); }, [pickerQuery, pickerOpen]);
+  // Clamp selection if candidate list shrinks.
+  useEffect(() => {
+    if (pickerSel >= pickerCandidates.length) setPickerSel(Math.max(0, pickerCandidates.length - 1));
+  }, [pickerCandidates.length, pickerSel]);
+
+  const insertPickedRef = (num: number) => {
+    const el = inputRef.current;
+    if (!el) { closePicker(); return; }
+    const val = el.value;
+    const before = val.slice(0, pickerDollarPos);
+    const after = val.slice(pickerDollarPos + 1 + pickerQuery.length);
+    const newVal = `${before}$${num}${after}`;
+    const caretAfter = before.length + 1 + String(num).length;
+    props.setBlocks(updateText(props.blocks, block.id, newVal));
+    closePicker();
+    requestAnimationFrame(() => {
+      inputRef.current?.setSelectionRange(caretAfter, caretAfter);
+    });
+  };
+
   useEffect(() => {
     if (isFocused && inputRef.current) {
       inputRef.current.focus();
@@ -456,6 +510,32 @@ function BlockRow({
   }, [block.text, isFocused]);
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (pickerOpen) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closePicker();
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setPickerSel((s) => Math.min(s + 1, Math.max(0, pickerCandidates.length - 1)));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setPickerSel((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (e.key === "Enter") {
+        const pick = pickerCandidates[pickerSel];
+        if (pick) {
+          e.preventDefault();
+          insertPickedRef(pick.num);
+          return;
+        }
+        // No candidate — fall through to normal Enter (split block).
+      }
+    }
     if (e.key === "Enter" && e.altKey) {
       e.preventDefault();
       props.setBlocks(setState(props.blocks, block.id, cycleFamily(block.state)));
@@ -547,6 +627,24 @@ function BlockRow({
       requestAnimationFrame(() => inputRef.current?.setSelectionRange(pos, pos));
       return;
     }
+    // Block-ref picker: open when `$` was just typed, else update or close.
+    if (!pickerOpen && pos >= 1 && val[pos - 1] === "$") {
+      setPickerOpen(true);
+      setPickerDollarPos(pos - 1);
+      setPickerQuery("");
+    } else if (pickerOpen) {
+      // Caret must still be after `$`, with only digits between them.
+      const between = val.slice(pickerDollarPos + 1, pos);
+      if (
+        pos <= pickerDollarPos
+        || val[pickerDollarPos] !== "$"
+        || !/^\d*$/.test(between)
+      ) {
+        closePicker();
+      } else {
+        setPickerQuery(between);
+      }
+    }
     props.setBlocks(updateText(props.blocks, block.id, val));
   };
 
@@ -582,15 +680,26 @@ function BlockRow({
           <StatePill state={block.state} onClick={cycleBlockState} />
         )}
         {isFocused ? (
-          <textarea
-            ref={inputRef}
-            className="block-input"
-            value={block.text}
-            rows={1}
-            onChange={handleChange}
-            onKeyDown={handleKey}
-            onBlur={() => { if (props.focusedId === block.id) props.setFocusedId(null); }}
-          />
+          <div className="block-input-wrap">
+            <textarea
+              ref={inputRef}
+              className="block-input"
+              value={block.text}
+              rows={1}
+              onChange={handleChange}
+              onKeyDown={handleKey}
+              onBlur={() => { if (props.focusedId === block.id) props.setFocusedId(null); }}
+            />
+            {pickerOpen && (
+              <BlockRefPicker
+                candidates={pickerCandidates}
+                query={pickerQuery}
+                selectedIdx={pickerSel}
+                setSelectedIdx={setPickerSel}
+                onPick={insertPickedRef}
+              />
+            )}
+          </div>
         ) : (
           <div
             className="block-preview"
@@ -607,7 +716,7 @@ function BlockRow({
             {block.text === "" ? (
               <span className="block-placeholder" />
             ) : (
-              renderBlockContent(block.text, props.onOpenLink, props.search?.query ?? null)
+              renderBlockContent(block.text, props.onOpenLink, props.onJumpToRef, props.search?.query ?? null)
             )}
           </div>
         )}
@@ -648,6 +757,7 @@ function formatPropValue(v: string): string {
 function renderBlockContent(
   text: string,
   onOpenLink: (t: string) => void,
+  onJumpToRef: (num: number) => void,
   highlight: string | null,
 ) {
   const fenced = parseCodeBlock(text);
@@ -660,12 +770,13 @@ function renderBlockContent(
       </pre>
     );
   }
-  return renderInline(text, onOpenLink, highlight);
+  return renderInline(text, onOpenLink, onJumpToRef, highlight);
 }
 
 function renderInline(
   text: string,
   onOpenLink: (t: string) => void,
+  onJumpToRef: (num: number) => void,
   highlight: string | null,
 ) {
   const hl = (s: string, key: number) => highlightText(s, highlight, key);
@@ -681,6 +792,18 @@ function renderInline(
       case "italic": return <em key={i}>{hl(part.value, i)}</em>;
       case "tag":    return <span key={i} className="inline-tag">#{hl(part.value, i)}</span>;
       case "code":   return <code key={i} className="inline-code">{hl(part.value, i)}</code>;
+      case "blockref":
+        return (
+          <a
+            key={i}
+            className="block-ref"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onJumpToRef(part.num); }}
+            title={`Jump to block $${part.num}`}
+          >
+            ${part.num}
+          </a>
+        );
       case "url":
         return (
           <a

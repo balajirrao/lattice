@@ -3,6 +3,7 @@ import { type Block, newBlock, resetIdCounter } from "../block";
 import {
   ancestorIdsOf,
   clone,
+  findByRefId,
   flatten,
   indent,
   insertAfter,
@@ -10,14 +11,17 @@ import {
   locate,
   moveDown,
   moveUp,
+  nextBlockId,
   outdent,
   regenerateIds,
   removeBlock,
   removeBlocks,
+  renumberPastedRefs,
   selectionRoots,
   setState,
   updateText,
 } from "../tree";
+import { parseMarkdown, serializeMarkdown } from "../markdown";
 
 beforeEach(() => resetIdCounter(0));
 
@@ -308,6 +312,67 @@ describe("removeBlock", () => {
     expect(flatten(next).map((f) => f.block.text)).toEqual(
       flatten(tree).map((f) => f.block.text),
     );
+  });
+});
+
+describe("nextBlockId", () => {
+  it("returns 1 for an empty tree", () => {
+    expect(nextBlockId([])).toBe(1);
+  });
+  it("returns max+1 across nested blocks", () => {
+    const md = "-a @id(2)\n  -b @id(7)\n-c @id(3)\n";
+    expect(nextBlockId(parseMarkdown(md))).toBe(8);
+  });
+  it("ignores non-numeric ids", () => {
+    const md = "-a @id(abc)\n-b @id(5)\n";
+    expect(nextBlockId(parseMarkdown(md))).toBe(6);
+  });
+});
+
+describe("findByRefId", () => {
+  it("finds nested block by ref id", () => {
+    const md = "-top\n  -nested @id(4)\n";
+    const tree = parseMarkdown(md);
+    const found = findByRefId(tree, 4);
+    expect(found?.text).toBe("nested");
+  });
+  it("returns null when missing", () => {
+    expect(findByRefId(parseMarkdown("-a @id(1)\n"), 99)).toBeNull();
+  });
+});
+
+describe("renumberPastedRefs", () => {
+  it("renumbers colliding ids and rewrites $N refs in pasted text", () => {
+    const dest = parseMarkdown("-existing @id(1)\n-other @id(2)\n");
+    const pasted = parseMarkdown("-foo @id(1)\n-bar see $1\n");
+    const out = renumberPastedRefs(dest, pasted);
+    // pasted id(1) collides with dest id(1) → reassigned to 3.
+    expect(out[0].properties.id).toBe("3");
+    // Internal $1 inside pasted block points to the *renamed* pasted block.
+    expect(out[1].text).toBe("bar see $3");
+  });
+
+  it("leaves non-colliding ids untouched", () => {
+    const dest = parseMarkdown("-a @id(1)\n");
+    const pasted = parseMarkdown("-b @id(5)\n-ref see $5\n");
+    const out = renumberPastedRefs(dest, pasted);
+    expect(out[0].properties.id).toBe("5");
+    expect(out[1].text).toBe("ref see $5");
+  });
+
+  it("does not rewrite $N pointing outside the pasted subtree", () => {
+    // $7 isn't a pasted block id, so the ref stays as-is (refers to dest).
+    const dest = parseMarkdown("-anchor @id(7)\n");
+    const pasted = parseMarkdown("-x see $7\n");
+    const out = renumberPastedRefs(dest, pasted);
+    expect(out[0].text).toBe("x see $7");
+  });
+
+  it("round-trips through markdown after renumbering", () => {
+    const dest = parseMarkdown("-d @id(1)\n");
+    const pasted = parseMarkdown("-p @id(1)\n");
+    const out = renumberPastedRefs(dest, pasted);
+    expect(serializeMarkdown(out)).toBe("-p @id(2)\n");
   });
 });
 

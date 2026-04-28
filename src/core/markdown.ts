@@ -19,7 +19,7 @@ const STATE_RE = new RegExp(
 const PROP_RE = /@([a-z][a-z0-9_]*)\(([^)]*)\)/g;
 
 /** Canonical ordering for well-known properties; others go alphabetical. */
-const PROP_ORDER = ["created", "started", "done"];
+const PROP_ORDER = ["id", "created", "started", "done"];
 
 /**
  * Strip `@key(value)` properties out of a line body, returning the cleaned

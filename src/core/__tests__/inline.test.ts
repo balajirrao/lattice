@@ -31,6 +31,22 @@ describe("parseInline", () => {
     expect(parseInline("#todo")).toEqual([{ type: "tag", value: "todo" }]);
   });
 
+  it("parses $N as a blockref", () => {
+    expect(parseInline("see $7 there")).toEqual([
+      { type: "text", value: "see " },
+      { type: "blockref", num: 7 },
+      { type: "text", value: " there" },
+    ]);
+  });
+
+  it("parses bare $N at start", () => {
+    expect(parseInline("$42")).toEqual([{ type: "blockref", num: 42 }]);
+  });
+
+  it("does not treat $ without digits as blockref", () => {
+    expect(parseInline("cost $abc")).toEqual([{ type: "text", value: "cost $abc" }]);
+  });
+
   it("parses mixed content", () => {
     expect(parseInline("see **bold** and [[Link]] #tag")).toEqual([
       { type: "text", value: "see " },

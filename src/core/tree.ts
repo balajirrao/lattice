@@ -47,6 +47,51 @@ export function ancestorIdsOf(blocks: Block[], id: string): string[] {
   return found ?? [];
 }
 
+/** Walk the tree, returning every block that has a `properties.id` set. */
+export function statedBlocks(blocks: Block[]): Block[] {
+  const out: Block[] = [];
+  const walk = (list: Block[]) => {
+    for (const b of list) {
+      if (b.properties.id) out.push(b);
+      walk(b.children);
+    }
+  };
+  walk(blocks);
+  return out;
+}
+
+/** Find a block by its persistent ref id (`properties.id` as integer). */
+export function findByRefId(blocks: Block[], num: number): Block | null {
+  let found: Block | null = null;
+  const walk = (list: Block[]) => {
+    for (const b of list) {
+      if (parseInt(b.properties.id ?? "", 10) === num) { found = b; return; }
+      walk(b.children);
+      if (found) return;
+    }
+  };
+  walk(blocks);
+  return found;
+}
+
+/**
+ * Compute the next available block ref id (per-note sequential integer).
+ * Walks the tree, finds the max numeric `properties.id`, returns max + 1.
+ * Non-numeric ids (legacy random-string ids) are ignored.
+ */
+export function nextBlockId(blocks: Block[]): number {
+  let max = 0;
+  const walk = (list: Block[]) => {
+    for (const b of list) {
+      const n = parseInt(b.properties.id ?? "", 10);
+      if (Number.isFinite(n) && n > max) max = n;
+      walk(b.children);
+    }
+  };
+  walk(blocks);
+  return max + 1;
+}
+
 export type FlatEntry = { block: Block; depth: number };
 
 export function flatten(blocks: Block[]): FlatEntry[] {
@@ -82,6 +127,9 @@ export function setState(
   if (!loc) return copy;
   const blk = loc.list[loc.index];
   blk.state = state;
+  if (state !== null && !blk.properties.id) {
+    blk.properties.id = String(nextBlockId(copy));
+  }
   if (state === "DOING" && !blk.properties.started) {
     blk.properties.started = currentTimestamp();
   }
@@ -215,6 +263,70 @@ export function regenerateIds(blocks: Block[]): Block[] {
     properties: { ...b.properties },
     children: regenerateIds(b.children),
   }));
+}
+
+/**
+ * Renumber `properties.id` on `pasted` so it never collides with existing
+ * ids in `dest`. Also rewrites any `$N` blockrefs inside pasted block text
+ * to point to the new ids, so internal links inside the pasted subtree
+ * keep working.
+ */
+export function renumberPastedRefs(
+  dest: Block[],
+  pasted: Block[],
+): Block[] {
+  const used = new Set<number>();
+  const collectExisting = (list: Block[]) => {
+    for (const b of list) {
+      const n = parseInt(b.properties.id ?? "", 10);
+      if (Number.isFinite(n)) used.add(n);
+      collectExisting(b.children);
+    }
+  };
+  collectExisting(dest);
+
+  const remap = new Map<number, number>();
+  let next = 1;
+  const allocId = (): number => {
+    while (used.has(next)) next += 1;
+    used.add(next);
+    return next;
+  };
+  const planRemap = (list: Block[]) => {
+    for (const b of list) {
+      const cur = parseInt(b.properties.id ?? "", 10);
+      if (Number.isFinite(cur) && used.has(cur) && !remap.has(cur)) {
+        remap.set(cur, allocId());
+      } else if (Number.isFinite(cur)) {
+        used.add(cur);
+      }
+      planRemap(b.children);
+    }
+  };
+  planRemap(pasted);
+
+  const rewriteText = (text: string): string =>
+    text.replace(/\$(\d+)/g, (m, d) => {
+      const n = parseInt(d, 10);
+      const r = remap.get(n);
+      return r == null ? m : `$${r}`;
+    });
+
+  const apply = (list: Block[]): Block[] =>
+    list.map((b) => {
+      const cur = parseInt(b.properties.id ?? "", 10);
+      const newId = remap.get(cur);
+      const props = { ...b.properties };
+      if (newId != null) props.id = String(newId);
+      return {
+        ...b,
+        text: rewriteText(b.text),
+        properties: props,
+        children: apply(b.children),
+      };
+    });
+
+  return apply(pasted);
 }
 
 /**

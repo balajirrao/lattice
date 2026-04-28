@@ -5,7 +5,8 @@ export type InlinePart =
   | { type: "italic"; value: string }
   | { type: "tag"; value: string }
   | { type: "url"; value: string }
-  | { type: "code"; value: string };
+  | { type: "code"; value: string }
+  | { type: "blockref"; num: number };
 
 /** Trailing chars stripped from bare URLs so "see https://x.com." doesn't
  *  swallow the sentence punctuation. They're re-emitted as plain text. */
@@ -24,7 +25,7 @@ export function parseInline(text: string): InlinePart[] {
   const parts: InlinePart[] = [];
   // Order matters: inline code first so backticks suppress other markup.
   const re =
-    /`([^`\n]+)`|\[\[([^\[\]\n]+)\]\]|\*\*([^*\n]+)\*\*|_([^_\n]+)_|#([\w-]+)|(https?:\/\/[^\s\[\]<>]+)/g;
+    /`([^`\n]+)`|\[\[([^\[\]\n]+)\]\]|\*\*([^*\n]+)\*\*|_([^_\n]+)_|#([\w-]+)|(https?:\/\/[^\s\[\]<>]+)|\$(\d+)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -48,6 +49,8 @@ export function parseInline(text: string): InlinePart[] {
       }
       parts.push({ type: "url", value: url });
       if (trail) parts.push({ type: "text", value: trail });
+    } else if (m[7] !== undefined) {
+      parts.push({ type: "blockref", num: parseInt(m[7], 10) });
     }
     last = m.index + m[0].length;
   }
@@ -95,6 +98,7 @@ export function renderedToSourceOffset(
       : p.type === "italic" ? p.value.length
       : p.type === "url"  ? p.value.length
       : p.type === "code" ? p.value.length
+      : p.type === "blockref" ? String(p.num).length + 1
       : /* tag */           p.value.length + 1;
     const sourceLen =
       p.type === "text"   ? p.value.length
@@ -103,6 +107,7 @@ export function renderedToSourceOffset(
       : p.type === "italic" ? p.value.length + 2
       : p.type === "url"  ? p.value.length
       : p.type === "code" ? p.value.length + 2
+      : p.type === "blockref" ? String(p.num).length + 1
       : /* tag */           p.value.length + 1;
     // Strict `<` so a click landing exactly on a part boundary falls
     // through to the *next* part. This keeps the cursor just outside
