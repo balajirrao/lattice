@@ -18,7 +18,7 @@ export function closingState(s: OpenState): TodoState {
   }
 }
 
-export type OpenState = Exclude<TodoState, null | "DONE" | "ANSWERED">;
+export type OpenState = Exclude<TodoState, null | "DONE" | "ANSWERED" | "REMEMBER">;
 
 export type OpenItem = {
   /** The block's id (usable with locate/openNote's focusBlockId). */

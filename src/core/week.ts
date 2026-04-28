@@ -4,6 +4,7 @@
  * Week id format: `YYYY-Www` (e.g. `2026-W17`). Lexicographic order matches
  * chronological order, which lets us sort week notes with a plain string sort.
  */
+import { type Block, TERMINAL_STATES, newBlock } from "./block";
 
 /** Compute the ISO week id for a date. */
 export function weekId(date: Date): string {
@@ -84,6 +85,55 @@ const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+/** Title of the wrapper block whose children are the daily Mon–Sun bullets. */
+export const DAILIES_BLOCK_TITLE = "Dailies";
+
+/** Build the Dailies wrapper block with empty Mon–Sun children. */
+export function dailiesTemplate(): Block {
+  const days: Block[] = WEEKDAY_NAMES.map((name) => ({
+    ...newBlock(name),
+    properties: {},
+  }));
+  return {
+    ...newBlock(DAILIES_BLOCK_TITLE),
+    properties: {},
+    children: days,
+  };
+}
+
+/** Recursively prune blocks whose state is in TERMINAL_STATES. A pruned
+ *  parent takes its entire subtree with it. */
+function pruneTerminal(blocks: Block[]): Block[] {
+  return blocks
+    .filter((b) => !TERMINAL_STATES.has(b.state))
+    .map((b) => ({ ...b, children: pruneTerminal(b.children) }));
+}
+
+/**
+ * Build the body for a new week's note from the previous week's blocks:
+ * - The top-level "Dailies" block (if any) has its children replaced with
+ *   a fresh Mon–Sun template (preserving the wrapper itself).
+ * - All other blocks copy as-is, with terminal-state blocks pruned (a
+ *   pruned parent takes its children with it).
+ * - If no Dailies wrapper exists, a fresh one is prepended so every new
+ *   week starts with the daily template.
+ */
+export function carryOverWeek(prev: Block[]): Block[] {
+  let sawDailies = false;
+  const out: Block[] = [];
+  for (const b of prev) {
+    if (!sawDailies && b.text === DAILIES_BLOCK_TITLE) {
+      sawDailies = true;
+      out.push({ ...b, children: dailiesTemplate().children });
+      continue;
+    }
+    if (TERMINAL_STATES.has(b.state)) continue;
+    out.push({ ...b, children: pruneTerminal(b.children) });
+  }
+  if (!sawDailies) out.unshift(dailiesTemplate());
+  return out;
+}
 
 /**
  * Format a week id as a human date range, e.g. "Apr 20 – 26".

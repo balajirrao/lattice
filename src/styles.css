@@ -12,6 +12,7 @@
   --answered: #8fd4a6;
   --idea: #e0d355;
   --waiting: #8a8b95;
+  --remember: #d4a373;
   --danger: #e06a6a;
   --tag: #b07ae0;
 }
@@ -184,6 +185,7 @@ ul.blocks { list-style: none; padding-left: 20px; margin: 0; }
 .state-answered { color: var(--answered); border-color: var(--answered); }
 .state-idea     { color: var(--idea);     border-color: var(--idea); }
 .state-waiting  { color: var(--waiting);  border-color: var(--waiting); }
+.state-remember { color: var(--remember); border-color: var(--remember); }
 
 /* Property chips (shown under a block when properties toggle is on) */
 .property-chips {

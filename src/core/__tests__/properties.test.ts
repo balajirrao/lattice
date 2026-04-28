@@ -232,14 +232,14 @@ describe("cycleState stays within family", () => {
 });
 
 describe("cycleFamily switches family", () => {
-  it("null -> TODO -> QUESTION -> IDEA -> WAITING -> null", () => {
+  it("null -> TODO -> QUESTION -> IDEA -> WAITING -> REMEMBER -> null", () => {
     let s: TodoState = null;
     const seen: TodoState[] = [s];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       s = cycleFamily(s);
       seen.push(s);
     }
-    expect(seen).toEqual([null, "TODO", "QUESTION", "IDEA", "WAITING", null]);
+    expect(seen).toEqual([null, "TODO", "QUESTION", "IDEA", "WAITING", "REMEMBER", null]);
   });
 
   it("jumps to first state of next family from any state in a family", () => {

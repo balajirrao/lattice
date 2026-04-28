@@ -862,7 +862,11 @@ function CollapseToggle({
 }
 
 function StatePill({ state, onClick }: { state: TodoState; onClick: () => void }) {
-  const label = state === "DONE" ? "✓" : state === "ANSWERED" ? "✓?" : state!;
+  const label =
+    state === "DONE" ? "✓"
+    : state === "ANSWERED" ? "✓?"
+    : state === "REMEMBER" ? "🧠"
+    : state!;
   return (
     <button
       type="button"

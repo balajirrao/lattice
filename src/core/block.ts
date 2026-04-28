@@ -6,6 +6,7 @@ export type TodoState =
   | "ANSWERED"
   | "IDEA"
   | "WAITING"
+  | "REMEMBER"
   | null;
 
 export type Properties = Record<string, string>;
@@ -24,12 +25,15 @@ export const STATE_FAMILIES: Exclude<TodoState, null>[][] = [
   ["QUESTION", "ANSWERED"],
   ["IDEA"],
   ["WAITING"],
+  ["REMEMBER"],
 ];
 
 /** States that should NOT carry forward to a new week. */
 export const TERMINAL_STATES: ReadonlySet<TodoState> = new Set<TodoState>([
   "DONE",
   "ANSWERED",
+  // REMEMBER blocks graduate into the SRS system, not weekly carryover.
+  "REMEMBER",
 ]);
 
 export const STATE_KEYWORDS: readonly string[] =

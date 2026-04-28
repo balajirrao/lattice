@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   WEEKDAY_NAMES,
+  carryOverWeek,
+  dailiesTemplate,
   formatWeekRange,
   isWeeklyTitle,
   mostRecentPrevWeek,
@@ -10,6 +12,7 @@ import {
   weekTitle,
   weekdayFor,
 } from "../week";
+import { parseMarkdown, serializeMarkdown } from "../markdown";
 
 describe("weekId", () => {
   it("computes ISO week for a mid-week day", () => {
@@ -121,5 +124,79 @@ describe("formatWeekRange", () => {
   it("spells out both years when the week crosses New Year", () => {
     // 2026-W53 = Dec 28 2026 – Jan 3 2027
     expect(formatWeekRange("2026-W53")).toBe("Dec 28, 2026 – Jan 3, 2027");
+  });
+});
+
+describe("dailiesTemplate", () => {
+  it("creates a Dailies wrapper with empty Mon..Sun children", () => {
+    const t = dailiesTemplate();
+    expect(t.text).toBe("Dailies");
+    expect(t.children.map((c) => c.text)).toEqual([...WEEKDAY_NAMES]);
+    expect(t.children.every((c) => c.children.length === 0)).toBe(true);
+  });
+});
+
+describe("carryOverWeek", () => {
+  it("resets the Dailies wrapper's children to empty Mon..Sun", () => {
+    const md =
+      "-Dailies\n  -Mon\n    -did stuff\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    const dailies = out[0];
+    expect(dailies.text).toBe("Dailies");
+    expect(dailies.children.map((c) => c.text)).toEqual([...WEEKDAY_NAMES]);
+    expect(dailies.children.every((c) => c.children.length === 0)).toBe(true);
+  });
+
+  it("prunes terminal blocks (DONE/ANSWERED/REMEMBER) from non-Dailies subtree", () => {
+    const md =
+      "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n" +
+      "-TODO active\n" +
+      "-DONE finished\n" +
+      "-ANSWERED resolved\n" +
+      "-REMEMBER fact\n" +
+      "-WAITING blocked\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    const titles = out.slice(1).map((b) => `${b.state ?? ""} ${b.text}`.trim());
+    expect(titles).toEqual(["TODO active", "WAITING blocked"]);
+  });
+
+  it("prunes terminal subtrees including their children", () => {
+    const md =
+      "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n" +
+      "-DONE parent\n  -TODO orphaned child\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    expect(out).toHaveLength(1); // only Dailies survives
+  });
+
+  it("recurses into non-terminal parents and prunes terminal children", () => {
+    const md =
+      "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n" +
+      "-Project\n  -TODO live\n  -DONE shipped\n  -ANSWERED answered q\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    const project = out[1];
+    expect(project.text).toBe("Project");
+    expect(project.children.map((c) => c.text)).toEqual(["live"]);
+  });
+
+  it("prepends a fresh Dailies template when prev had none", () => {
+    const md = "-just notes\n-TODO carry me\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    expect(out[0].text).toBe("Dailies");
+    expect(out[0].children.map((c) => c.text)).toEqual([...WEEKDAY_NAMES]);
+    expect(out.slice(1).map((b) => b.text)).toEqual(["just notes", "carry me"]);
+  });
+
+  it("preserves @id on the Dailies wrapper itself", () => {
+    const md = "-Dailies @id(3)\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    // The wrapper keeps any properties it had; only its children are reset.
+    expect(out[0].properties.id).toBe("3");
+  });
+
+  it("round-trips through markdown serialization", () => {
+    const md = "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n-TODO live\n-DONE dead\n";
+    const out = carryOverWeek(parseMarkdown(md));
+    const expected = "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n-TODO live\n";
+    expect(serializeMarkdown(out)).toBe(expected);
   });
 });
