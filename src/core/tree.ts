@@ -419,3 +419,48 @@ export function removeBlock(
   if (loc) loc.list.splice(loc.index, 1);
   return { tree: copy, prevId };
 }
+
+export type DropPosition = "before" | "after" | "child";
+
+/**
+ * Move the subtrees rooted at `ids` (treated as a selection) to a new
+ * location relative to `target`. Returns null if the target is itself one
+ * of the moved blocks or a descendant of one (which would orphan the tree).
+ *
+ * - `before` / `after`: insert as siblings of target.
+ * - `child`: insert as the first children of target.
+ *
+ * Block ids are preserved (this is a move, not a copy), so external refs
+ * keep working.
+ */
+export function moveBlocks(
+  blocks: Block[],
+  ids: Set<string>,
+  target: { id: string; position: DropPosition },
+): { tree: Block[]; movedIds: string[] } | null {
+  if (ids.size === 0) return null;
+  const roots = selectionRoots(blocks, ids);
+  if (roots.length === 0) return null;
+  const movedIds = roots.map((r) => r.id);
+  const inSubtree = (start: Block[], id: string): boolean => {
+    for (const b of start) {
+      if (b.id === id) return true;
+      if (inSubtree(b.children, id)) return true;
+    }
+    return false;
+  };
+  if (inSubtree(roots, target.id)) return null;
+
+  const cloned = clone(roots);
+  const { tree: pruned } = removeBlocks(blocks, ids);
+  const loc = locate(pruned, target.id);
+  if (!loc) return null;
+  if (target.position === "before") {
+    loc.list.splice(loc.index, 0, ...cloned);
+  } else if (target.position === "after") {
+    loc.list.splice(loc.index + 1, 0, ...cloned);
+  } else {
+    loc.list[loc.index].children.unshift(...cloned);
+  }
+  return { tree: pruned, movedIds };
+}

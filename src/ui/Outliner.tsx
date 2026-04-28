@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  DndContext,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
   type Block,
+  type DropPosition,
   type Properties,
   type TodoState,
   ancestorIdsOf,
@@ -10,6 +22,7 @@ import {
   indent,
   insertAfter,
   insertBlocksAfter,
+  moveBlocks,
   moveDown,
   moveUp,
   newBlock,
@@ -120,6 +133,8 @@ function visibleFlat(blocks: Block[], collapsed: CollapsedIds): Block[] {
   return out;
 }
 
+const LATTICE_CLIPBOARD_MIME = "application/x-lattice-blocks";
+
 /** Looks like our markdown format: every non-empty line starts with `-`
  *  or whitespace+`-`, and there is more than one such line (single-line
  *  pastes go through the native text-paste path so plain text isn't
@@ -132,14 +147,13 @@ function isBulkOutlineClipboard(text: string): boolean {
 
 export function Outliner(props: OutlinerProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const anchorIdRef = useRef<string | null>(null);
-  const dragActiveRef = useRef(false);
-  // If a drag ends back on its anchor, a click still fires — suppress it
-  // so the block-preview's onClick doesn't re-focus and clear selection.
-  const suppressClickRef = useRef(false);
+  const [draggedIds, setDraggedIds] = useState<Set<string> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
 
-  const { blocks, collapsedIds, focusedId, setBlocks, setFocusedId, expandIds } = props;
+  const { blocks, focusedId, setBlocks, setFocusedId, expandIds } = props;
 
   // ── in-note search ──────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
@@ -218,63 +232,6 @@ export function Outliner(props: OutlinerProps) {
     if (focusedId !== null) setSelectedIds(new Set());
   }, [focusedId]);
 
-  const blockIdFromTarget = (t: EventTarget | null): string | null => {
-    let el = t as HTMLElement | null;
-    while (el) {
-      if (el.dataset && el.dataset.blockId) return el.dataset.blockId;
-      el = el.parentElement;
-    }
-    return null;
-  };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    const id = blockIdFromTarget(e.target);
-    if (!id) return;
-    anchorIdRef.current = id;
-    dragActiveRef.current = false;
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const anchor = anchorIdRef.current;
-    if (!anchor) return;
-    const current = blockIdFromTarget(e.target);
-    if (!current) return;
-    if (!dragActiveRef.current && current === anchor) return;
-    if (!dragActiveRef.current) {
-      dragActiveRef.current = true;
-      if (document.activeElement instanceof HTMLInputElement) {
-        document.activeElement.blur();
-      }
-      window.getSelection()?.removeAllRanges();
-      setFocusedId(null);
-    }
-    const flat = visibleFlat(blocks, collapsedIds).map((b) => b.id);
-    const ai = flat.indexOf(anchor);
-    const ci = flat.indexOf(current);
-    if (ai < 0 || ci < 0) return;
-    const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
-    setSelectedIds(new Set(flat.slice(lo, hi + 1)));
-  };
-
-  // A drag that ends outside the outliner still needs to clear state.
-  useEffect(() => {
-    const onUp = () => {
-      if (dragActiveRef.current) suppressClickRef.current = true;
-      anchorIdRef.current = null;
-      dragActiveRef.current = false;
-    };
-    document.addEventListener("mouseup", onUp);
-    return () => document.removeEventListener("mouseup", onUp);
-  }, []);
-
-  const handleClickCapture = (e: React.MouseEvent) => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      e.stopPropagation();
-    }
-  };
-
   // Selection-level keys: Esc clears; Backspace/Delete removes.
   useEffect(() => {
     if (selectedIds.size === 0) return;
@@ -303,18 +260,45 @@ export function Outliner(props: OutlinerProps) {
     const onCopy = (e: ClipboardEvent) => {
       const roots = selectionRoots(blocks, selectedIds);
       if (roots.length === 0) return;
-      e.clipboardData?.setData("text/plain", serializeMarkdown(roots));
+      const md = serializeMarkdown(roots);
+      e.clipboardData?.setData("text/plain", md);
+      e.clipboardData?.setData(LATTICE_CLIPBOARD_MIME, md);
       e.preventDefault();
     };
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
   }, [blocks, selectedIds]);
 
-  // Paste: if the clipboard looks like a bulk outline, splice it in.
+  // Cut: copy selection markdown then remove the selected subtrees.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const onCut = (e: ClipboardEvent) => {
+      const roots = selectionRoots(blocks, selectedIds);
+      if (roots.length === 0) return;
+      const md = serializeMarkdown(roots);
+      e.clipboardData?.setData("text/plain", md);
+      e.clipboardData?.setData(LATTICE_CLIPBOARD_MIME, md);
+      e.preventDefault();
+      const { tree, prevId } = removeBlocks(blocks, selectedIds);
+      const safeTree = tree.length === 0 ? [newBlock()] : tree;
+      setBlocks(safeTree);
+      setSelectedIds(new Set());
+      setFocusedId(prevId ?? safeTree[0].id);
+    };
+    document.addEventListener("cut", onCut);
+    return () => document.removeEventListener("cut", onCut);
+  }, [blocks, selectedIds, setBlocks, setFocusedId]);
+
+  // Paste: if the clipboard came from Lattice or looks like a bulk outline,
+  // parse and splice it in as blocks. Single-block pastes from outside
+  // Lattice still go through the native text-paste path so plain text
+  // isn't hijacked.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const text = e.clipboardData?.getData("text/plain");
-      if (!text || !isBulkOutlineClipboard(text)) return;
+      const lattice = e.clipboardData?.getData(LATTICE_CLIPBOARD_MIME);
+      const text = lattice || e.clipboardData?.getData("text/plain") || "";
+      if (!text) return;
+      if (!lattice && !isBulkOutlineClipboard(text)) return;
       const parsed = parseMarkdown(text);
       if (parsed.length === 0) return;
       e.preventDefault();
@@ -327,6 +311,51 @@ export function Outliner(props: OutlinerProps) {
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
   }, [blocks, focusedId, setBlocks, setFocusedId]);
+
+  // ── drag-and-drop (dnd-kit) ────────────────────────────────────────────
+  const onDragStart = (e: DragStartEvent) => {
+    const blockId = e.active.data.current?.blockId as string | undefined;
+    if (!blockId) return;
+    const ids = selectedIds.has(blockId) ? new Set(selectedIds) : new Set([blockId]);
+    setDraggedIds(ids);
+    setFocusedId(null);
+  };
+  const onDragEnd = (e: DragEndEvent) => {
+    const ids = draggedIds;
+    setDraggedIds(null);
+    if (!ids || !e.over) return;
+    const targetId = e.over.data.current?.blockId as string | undefined;
+    const position = e.over.data.current?.position as DropPosition | undefined;
+    if (!targetId || !position) return;
+    if (ids.has(targetId)) return;
+    const r = moveBlocks(blocks, ids, { id: targetId, position });
+    if (!r) return;
+    setBlocks(r.tree);
+    setSelectedIds(new Set());
+    if (r.movedIds[0]) setFocusedId(r.movedIds[0]);
+  };
+  const onDragCancel = () => setDraggedIds(null);
+
+  // Click-to-select on the bullet/triangle. Shift extends, ⌘/Ctrl toggles.
+  const onBulletSelect = (
+    blockId: string,
+    mods: { shift: boolean; meta: boolean },
+  ) => {
+    setFocusedId(null);
+    setSelectedIds((prev) => {
+      if (mods.meta) {
+        const next = new Set(prev);
+        if (next.has(blockId)) next.delete(blockId); else next.add(blockId);
+        return next;
+      }
+      if (mods.shift) {
+        const next = new Set(prev);
+        next.add(blockId);
+        return next;
+      }
+      return new Set([blockId]);
+    });
+  };
 
   const onJumpToRef = (num: number) => {
     const target = findByRefId(blocks, num);
@@ -342,30 +371,39 @@ export function Outliner(props: OutlinerProps) {
     });
   };
 
-  const childProps = { ...props, selectedIds, search: searchCtx, onJumpToRef };
+  const childProps = {
+    ...props,
+    selectedIds,
+    search: searchCtx,
+    onJumpToRef,
+    isDragging: draggedIds !== null,
+    onBulletSelect,
+  };
 
   return (
-    <div
-      ref={rootRef}
-      className="outliner"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onClickCapture={handleClickCapture}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={onDragCancel}
     >
-      {searchOpen && (
-        <NoteSearchBar
-          inputRef={searchInputRef}
-          query={searchQuery}
-          setQuery={setSearchQuery}
-          matchCount={matchIds.length}
-          matchIdx={matchIdx}
-          onNext={() => stepMatch(1)}
-          onPrev={() => stepMatch(-1)}
-          onClose={closeSearch}
-        />
-      )}
-      <BlockList {...childProps} list={props.blocks} />
-    </div>
+      <div ref={rootRef} className="outliner">
+        {searchOpen && (
+          <NoteSearchBar
+            inputRef={searchInputRef}
+            query={searchQuery}
+            setQuery={setSearchQuery}
+            matchCount={matchIds.length}
+            matchIdx={matchIdx}
+            onNext={() => stepMatch(1)}
+            onPrev={() => stepMatch(-1)}
+            onClose={closeSearch}
+          />
+        )}
+        <BlockList {...childProps} list={props.blocks} />
+      </div>
+    </DndContext>
   );
 }
 
@@ -430,6 +468,8 @@ type BlockRowSharedProps = OutlinerProps & {
   selectedIds: Set<string>;
   search: SearchContext | null;
   onJumpToRef: (num: number) => void;
+  isDragging: boolean;
+  onBulletSelect: (blockId: string, mods: { shift: boolean; meta: boolean }) => void;
 };
 type BlockListProps = BlockRowSharedProps & { list: Block[] };
 
@@ -672,10 +712,13 @@ function BlockRow({
     <li className={liClass} data-block-id={block.id}>
       <div className="block-row">
         <CollapseToggle
+          blockId={block.id}
           hasChildren={hasChildren}
           collapsed={isCollapsed}
           onToggle={() => props.toggleCollapse(block.id)}
+          onSelect={(mods) => props.onBulletSelect(block.id, mods)}
         />
+        {props.isDragging && <DropZones blockId={block.id} />}
         {block.state !== null && (
           <StatePill state={block.state} onClick={cycleBlockState} />
         )}
@@ -849,15 +892,66 @@ function highlightText(text: string, query: string | null, keyBase: number) {
 }
 
 function CollapseToggle({
-  hasChildren, collapsed, onToggle,
+  blockId, hasChildren, collapsed, onToggle, onSelect,
 }: {
-  hasChildren: boolean; collapsed: boolean; onToggle: () => void;
+  blockId: string;
+  hasChildren: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  onSelect: (mods: { shift: boolean; meta: boolean }) => void;
 }) {
-  if (!hasChildren) return <span className="bullet">•</span>;
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+    id: `block:${blockId}`,
+    data: { blockId },
+  });
+  const handleClick = (e: React.MouseEvent, isLeaf: boolean) => {
+    e.stopPropagation();
+    if (isLeaf || e.shiftKey || e.metaKey || e.ctrlKey) {
+      onSelect({ shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
+    } else {
+      onToggle();
+    }
+  };
   return (
-    <button type="button" className="collapse-toggle" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={collapsed ? "Expand" : "Collapse"}>
-      {collapsed ? "▶" : "▼"}
-    </button>
+    <span
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={hasChildren ? "collapse-toggle" : "bullet"}
+      onClick={(e) => handleClick(e, !hasChildren)}
+      title={
+        hasChildren
+          ? `${collapsed ? "Expand" : "Collapse"} • Shift/⌘+click to select • drag to move`
+          : "Click to select • drag to move"
+      }
+      style={isDragging ? { opacity: 0.4 } : undefined}
+    >
+      {hasChildren ? (collapsed ? "▶" : "▼") : "•"}
+    </span>
+  );
+}
+
+function DropZones({ blockId }: { blockId: string }) {
+  return (
+    <>
+      <DropZone blockId={blockId} position="before" />
+      <DropZone blockId={blockId} position="child" />
+      <DropZone blockId={blockId} position="after" />
+    </>
+  );
+}
+
+function DropZone({ blockId, position }: { blockId: string; position: DropPosition }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `drop:${blockId}:${position}`,
+    data: { blockId, position },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`drop-zone drop-zone-${position}${isOver ? " drop-zone-over" : ""}`}
+      aria-hidden
+    />
   );
 }
 

@@ -9,6 +9,7 @@ import {
   insertAfter,
   insertBlocksAfter,
   locate,
+  moveBlocks,
   moveDown,
   moveUp,
   nextBlockId,
@@ -497,5 +498,87 @@ describe("removeBlocks", () => {
       flatten(tree).map((f) => f.block.text),
     );
     expect(prevId).toBeNull();
+  });
+});
+
+describe("moveBlocks", () => {
+  it("moves a block before a target sibling", () => {
+    const tree = sample();
+    const b = tree[1];
+    const a2 = tree[0].children[1];
+    const r = moveBlocks(tree, new Set([b.id]), { id: a2.id, position: "before" })!;
+    // Now a's children are [a1, b, a2]
+    expect(flatten(r.tree).map((f) => f.block.text)).toEqual([
+      "a", "a1", "a1a", "b", "a2",
+    ]);
+  });
+
+  it("moves a block after a target sibling", () => {
+    const tree = sample();
+    const b = tree[1];
+    const a1 = tree[0].children[0];
+    const r = moveBlocks(tree, new Set([b.id]), { id: a1.id, position: "after" })!;
+    expect(flatten(r.tree).map((f) => f.block.text)).toEqual([
+      "a", "a1", "a1a", "b", "a2",
+    ]);
+  });
+
+  it("moves a block as the first child of target", () => {
+    const tree = sample();
+    const b = tree[1];
+    const a1 = tree[0].children[0];
+    const r = moveBlocks(tree, new Set([b.id]), { id: a1.id, position: "child" })!;
+    // a1 now has [b, a1a]
+    expect(flatten(r.tree).map((f) => f.block.text)).toEqual([
+      "a", "a1", "b", "a1a", "a2",
+    ]);
+  });
+
+  it("preserves block ids on move", () => {
+    const tree = sample();
+    const b = tree[1];
+    const a1 = tree[0].children[0];
+    const r = moveBlocks(tree, new Set([b.id]), { id: a1.id, position: "child" })!;
+    expect(r.movedIds).toEqual([b.id]);
+  });
+
+  it("rejects moving a block onto itself", () => {
+    const tree = sample();
+    const a = tree[0];
+    expect(moveBlocks(tree, new Set([a.id]), { id: a.id, position: "after" })).toBeNull();
+  });
+
+  it("rejects moving a block into one of its descendants", () => {
+    const tree = sample();
+    const a = tree[0];
+    const a1a = tree[0].children[0].children[0];
+    expect(moveBlocks(tree, new Set([a.id]), { id: a1a.id, position: "child" })).toBeNull();
+  });
+
+  it("moves multiple selected siblings preserving order", () => {
+    const tree = sample();
+    const a = tree[0];
+    const b = tree[1];
+    const a1 = a.children[0];
+    // Select a1 + b. Their selection roots in document order: [a1, b].
+    // Move them as children of a fresh target.
+    const c = newBlock("c");
+    const next = [...tree, c];
+    const r = moveBlocks(next, new Set([a1.id, b.id]), { id: c.id, position: "child" })!;
+    expect(flatten(r.tree).map((f) => f.block.text)).toEqual([
+      "a", "a2", "c", "a1", "a1a", "b",
+    ]);
+  });
+
+  it("ignores selected descendants of selected ancestors", () => {
+    const tree = sample();
+    const a = tree[0];
+    const a1a = tree[0].children[0].children[0];
+    const b = tree[1];
+    // Selecting both a and a1a → only a's subtree moves.
+    const r = moveBlocks(tree, new Set([a.id, a1a.id]), { id: b.id, position: "after" })!;
+    expect(flatten(r.tree).map((f) => f.block.text)).toEqual([
+      "b", "a", "a1", "a1a", "a2",
+    ]);
   });
 });

@@ -94,6 +94,53 @@ export function App() {
   const [backlinks, setBacklinks] = useState<string[]>([]);
   const updater = useAutoUpdate();
 
+  const SIDEBAR_MIN = 160;
+  const SIDEBAR_MAX = 480;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem("lattice-sidebar-width") ?? "", 10);
+    return Number.isFinite(saved) ? Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, saved)) : 230;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => localStorage.getItem("lattice-sidebar-collapsed") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem("lattice-sidebar-width", String(sidebarWidth));
+  }, [sidebarWidth]);
+  useEffect(() => {
+    localStorage.setItem("lattice-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
+
+  // ⌘\ toggles the sidebar.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        setSidebarCollapsed((c) => !c);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Drag-to-resize the sidebar. Tracks pointer until release.
+  const startSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: PointerEvent) => {
+      const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)));
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("resizing-sidebar");
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.classList.add("resizing-sidebar");
+  };
+
   const skipAutosaveRef = useRef(false);
 
   // Undo: a snapshot captures the "before" state of a single mutation.
@@ -453,7 +500,19 @@ export function App() {
       <UpdateBanner updater={updater} />
 
 
-      <aside className="sidebar">
+      {sidebarCollapsed && (
+        <button
+          className="sidebar-show"
+          onClick={() => setSidebarCollapsed(false)}
+          title="Show sidebar (⌘\\)"
+        >
+          ☰
+        </button>
+      )}
+      <aside
+        className={`sidebar${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+        style={sidebarCollapsed ? undefined : { width: sidebarWidth }}
+      >
         <div className="sidebar-top">
           <div className="sidebar-actions">
             <button onClick={() => setShowSearch(true)} title="Search (⌘K)">🔍</button>
@@ -461,6 +520,11 @@ export function App() {
             <button onClick={() => setShowPalette(true)} title="Run workflow (⌘⇧P)">⚡</button>
             <button onClick={startNewWeek} title="Start / open this week">📆</button>
             <button onClick={openZettel} title="New Zettelkasten note">✦</button>
+            <button
+              onClick={() => setSidebarCollapsed(true)}
+              title="Hide sidebar (⌘\\)"
+              className="sidebar-collapse-btn"
+            >◀</button>
           </div>
           <div className="new-note">
             <input
@@ -515,6 +579,11 @@ export function App() {
             Change vault
           </button>
         </div>
+        <div
+          className="sidebar-resize"
+          onPointerDown={startSidebarResize}
+          title="Drag to resize"
+        />
       </aside>
 
       <main className="main">
