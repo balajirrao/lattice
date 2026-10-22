@@ -116,6 +116,33 @@ impl Notes {
             fs::create_dir_all(parent)?;
         }
         fs::rename(&old_path, &new_path)?;
+
+        // Rewrite [[old_title]] references across the vault.
+        for t in self.list()? {
+            let path = match self.file_path(&t) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let updated = replace_links(&content, old_title, new_title);
+            if updated != content {
+                fs::write(&path, updated)?;
+            }
+        }
+
+        // Update favorites entry if the renamed note was favorited.
+        let favs = self.get_favorites();
+        if favs.iter().any(|f| f == old_title) {
+            let new_favs: Vec<String> = favs
+                .into_iter()
+                .map(|f| if f == old_title { new_title.to_string() } else { f })
+                .collect();
+            let _ = self.set_favorites(&new_favs);
+        }
+
         Ok(())
     }
 
@@ -209,6 +236,47 @@ pub fn safe_path(title: &str) -> Result<PathBuf, NoteError> {
         path.push(p);
     }
     Ok(path)
+}
+
+/// Replace `[[old_title]]` with `[[new_title]]` in `content`.
+/// Match is case-insensitive on the trimmed inner text, mirroring the
+/// inline parser which forbids `[`, `]`, or newlines inside a link.
+fn replace_links(content: &str, old_title: &str, new_title: &str) -> String {
+    let old_lower = old_title.trim().to_lowercase();
+    let bytes = content.as_bytes();
+    let mut out = String::with_capacity(content.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            let mut j = i + 2;
+            let mut close = None;
+            while j + 1 < bytes.len() {
+                let b = bytes[j];
+                if b == b'\n' || b == b'[' {
+                    break;
+                }
+                if b == b']' && bytes[j + 1] == b']' {
+                    close = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            if let Some(c) = close {
+                let inner = &content[i + 2..c];
+                if inner.trim().to_lowercase() == old_lower {
+                    out.push_str("[[");
+                    out.push_str(new_title);
+                    out.push_str("]]");
+                    i = c + 2;
+                    continue;
+                }
+            }
+        }
+        let ch = content[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 fn make_excerpt(content: &str, query: &str) -> String {
@@ -319,6 +387,46 @@ mod tests {
         notes.rename("old", "new").unwrap();
         assert!(!tmp.path().join("old.md").exists());
         assert_eq!(notes.read("new").unwrap().content, "content");
+    }
+
+    #[test]
+    fn rename_updates_references_in_other_notes() {
+        let (_tmp, notes) = fixture();
+        notes.write("target", "- I am the target").unwrap();
+        notes.write("a", "-see [[target]] here").unwrap();
+        notes.write("b", "-and also [[ target ]] inline").unwrap();
+        notes.write("c", "-no link here").unwrap();
+        notes.rename("target", "renamed").unwrap();
+        assert_eq!(notes.read("a").unwrap().content, "-see [[renamed]] here");
+        assert_eq!(notes.read("b").unwrap().content, "-and also [[renamed]] inline");
+        assert_eq!(notes.read("c").unwrap().content, "-no link here");
+    }
+
+    #[test]
+    fn rename_reference_match_is_case_insensitive() {
+        let (_tmp, notes) = fixture();
+        notes.write("Foo", "-x").unwrap();
+        notes.write("a", "-link to [[foo]]").unwrap();
+        notes.rename("Foo", "Bar").unwrap();
+        assert_eq!(notes.read("a").unwrap().content, "-link to [[Bar]]");
+    }
+
+    #[test]
+    fn rename_does_not_touch_partial_matches() {
+        let (_tmp, notes) = fixture();
+        notes.write("foo", "-x").unwrap();
+        notes.write("a", "-keep [[foobar]] alone").unwrap();
+        notes.rename("foo", "baz").unwrap();
+        assert_eq!(notes.read("a").unwrap().content, "-keep [[foobar]] alone");
+    }
+
+    #[test]
+    fn rename_updates_favorites() {
+        let (_tmp, notes) = fixture();
+        notes.write("old", "").unwrap();
+        notes.set_favorites(&["old".to_string(), "other".to_string()]).unwrap();
+        notes.rename("old", "new").unwrap();
+        assert_eq!(notes.get_favorites(), vec!["new", "other"]);
     }
 
     #[test]

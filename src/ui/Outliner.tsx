@@ -41,6 +41,7 @@ import {
   updateText,
 } from "../core";
 import { BlockRefPicker, buildCandidates } from "./BlockRefPicker";
+import { LinkPicker, filterTitles } from "./LinkPicker";
 import * as api from "./api";
 
 export type CollapsedIds = { has(id: string): boolean };
@@ -51,6 +52,8 @@ type OutlinerProps = {
   focusedId: string | null;
   setFocusedId: (id: string | null) => void;
   onOpenLink: (title: string) => void;
+  /** Vault note titles, used for the [[…]] link picker. */
+  allTitles: string[];
   collapsedIds: CollapsedIds;
   toggleCollapse: (id: string) => void;
   expandIds: (ids: string[]) => void;
@@ -515,6 +518,43 @@ function BlockRow({
     if (pickerSel >= pickerCandidates.length) setPickerSel(Math.max(0, pickerCandidates.length - 1));
   }, [pickerCandidates.length, pickerSel]);
 
+  // ── note-link picker state ────────────────────────────────────────────────
+  // Open after the user types `[[`. `linkBracketsPos` is the index of the
+  // first `[`; `linkQuery` is the text typed between `[[` and the caret.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkBracketsPos, setLinkBracketsPos] = useState(0);
+  const [linkQuery, setLinkQuery] = useState("");
+  const [linkSel, setLinkSel] = useState(0);
+  const closeLinkPicker = () => { setLinkOpen(false); setLinkQuery(""); setLinkSel(0); };
+
+  const linkCandidates = useMemo(
+    () => linkOpen ? filterTitles(props.allTitles, linkQuery) : [],
+    [linkOpen, linkQuery, props.allTitles],
+  );
+
+  useEffect(() => { setLinkSel(0); }, [linkQuery, linkOpen]);
+  useEffect(() => {
+    if (linkSel >= linkCandidates.length) setLinkSel(Math.max(0, linkCandidates.length - 1));
+  }, [linkCandidates.length, linkSel]);
+
+  const insertPickedLink = (title: string) => {
+    const el = inputRef.current;
+    if (!el) { closeLinkPicker(); return; }
+    const val = el.value;
+    const before = val.slice(0, linkBracketsPos);
+    const queryStart = linkBracketsPos + 2;
+    const queryEnd = queryStart + linkQuery.length;
+    let after = val.slice(queryEnd);
+    if (after.startsWith("]]")) after = after.slice(2);
+    const newVal = `${before}[[${title}]]${after}`;
+    const caretAfter = before.length + 2 + title.length + 2;
+    props.setBlocks(updateText(props.blocks, block.id, newVal));
+    closeLinkPicker();
+    requestAnimationFrame(() => {
+      inputRef.current?.setSelectionRange(caretAfter, caretAfter);
+    });
+  };
+
   const insertPickedRef = (num: number) => {
     const el = inputRef.current;
     if (!el) { closePicker(); return; }
@@ -550,6 +590,38 @@ function BlockRow({
   }, [block.text, isFocused]);
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (linkOpen) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeLinkPicker();
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setLinkSel((s) => Math.min(s + 1, Math.max(0, linkCandidates.length - 1)));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setLinkSel((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const pick = linkCandidates[linkSel] ?? linkQuery.trim();
+        if (pick) insertPickedLink(pick);
+        else closeLinkPicker();
+        return;
+      }
+      if (e.key === "Tab") {
+        const pick = linkCandidates[linkSel];
+        if (pick) {
+          e.preventDefault();
+          insertPickedLink(pick);
+          return;
+        }
+      }
+    }
     if (pickerOpen) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -661,11 +733,32 @@ function BlockRow({
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     const pos = e.target.selectionStart ?? val.length;
-    if (pos >= 2 && val.slice(pos - 2, pos) === "[[") {
+    const ne = e.nativeEvent as InputEvent;
+    const justTypedOpenBracket =
+      ne.inputType === "insertText" && ne.data === "[";
+    // Auto-close `[[` → `[[]]` and open the link picker, but only when the
+    // user actually just typed an opening bracket — not on deletes or other
+    // edits that incidentally leave `[[` before the caret.
+    if (justTypedOpenBracket && pos >= 2 && val.slice(pos - 2, pos) === "[[") {
       const newVal = val.slice(0, pos) + "]]" + val.slice(pos);
       props.setBlocks(updateText(props.blocks, block.id, newVal));
+      setLinkOpen(true);
+      setLinkBracketsPos(pos - 2);
+      setLinkQuery("");
       requestAnimationFrame(() => inputRef.current?.setSelectionRange(pos, pos));
       return;
+    }
+    // Update or close the link picker as the caret moves / query changes.
+    if (linkOpen) {
+      const queryStart = linkBracketsPos + 2;
+      const opensOk = val.slice(linkBracketsPos, queryStart) === "[[";
+      if (!opensOk || pos < queryStart) {
+        closeLinkPicker();
+      } else {
+        const between = val.slice(queryStart, pos);
+        if (/[\n\[\]]/.test(between)) closeLinkPicker();
+        else setLinkQuery(between);
+      }
     }
     // Block-ref picker: open when `$` was just typed, else update or close.
     if (!pickerOpen && pos >= 1 && val[pos - 1] === "$") {
@@ -740,6 +833,15 @@ function BlockRow({
                 selectedIdx={pickerSel}
                 setSelectedIdx={setPickerSel}
                 onPick={insertPickedRef}
+              />
+            )}
+            {linkOpen && (
+              <LinkPicker
+                candidates={linkCandidates}
+                query={linkQuery}
+                selectedIdx={linkSel}
+                setSelectedIdx={setLinkSel}
+                onPick={insertPickedLink}
               />
             )}
           </div>

@@ -631,6 +631,7 @@ export function App() {
               focusedId={focusedId}
               setFocusedId={setFocusedId}
               onOpenLink={createOrOpen}
+              allTitles={allTitles}
               collapsedIds={collapsedIds}
               toggleCollapse={toggleCollapse}
               expandIds={expandIds}
