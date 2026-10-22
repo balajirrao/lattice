@@ -156,6 +156,30 @@ export function App() {
     undoStackRef.current = pushSnapshot(undoStackRef.current, snap, MAX_UNDO);
   };
 
+  // Latest editor state, readable from callbacks without re-binding them.
+  const titleRef = useRef<string | null>(null);
+  const blocksRef = useRef<Block[]>([]);
+  titleRef.current = currentTitle;
+  blocksRef.current = blocks;
+
+  /**
+   * Write the open note now if it has unsaved edits. The debounced
+   * autosave calls this, and so does anything that is about to swap the
+   * editor contents (open, rename, workflows) — otherwise an edit made
+   * less than 400ms earlier would be dropped with the cancelled timer.
+   */
+  const flushSave = useCallback(async () => {
+    const title = titleRef.current;
+    const cur = blocksRef.current;
+    if (!title || cur === lastSavedBlocksRef.current) return;
+    const next = serializeMarkdown(cur);
+    const prevBlocks = lastSavedBlocksRef.current;
+    lastSavedBlocksRef.current = cur;
+    if (next === serializeMarkdown(prevBlocks)) return;
+    pushUndo({ label: `edit in ${title}`, payload: { kind: "editor", title, blocks: prevBlocks } });
+    await api.writeNote(title, next);
+  }, []);
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -194,6 +218,7 @@ export function App() {
 
   const openNote = useCallback(
     async (title: string, opts?: { openItemIndex?: number; findQuery?: string }) => {
+      await flushSave();
       const { content } = await api.readNote(title);
       const parsed = parseMarkdown(content);
       const initial = parsed.length > 0 ? parsed : [newBlock()];
@@ -205,6 +230,8 @@ export function App() {
       skipAutosaveRef.current = true;
       setCurrentTitle(title);
       setBlocks(initial);
+      titleRef.current = title;
+      blocksRef.current = initial;
       lastSavedBlocksRef.current = initial;
       // If we're jumping to a search hit, skip the weekday / first-block
       // focus — the Outliner will scroll & focus the matching block.
@@ -218,7 +245,7 @@ export function App() {
       setBacklinks(links);
       await refreshList();
     },
-    [refreshList],
+    [refreshList, flushSave],
   );
 
   const closeOpenItem = useCallback(
@@ -272,6 +299,7 @@ export function App() {
       if (currentTitle === p.title) {
         skipAutosaveRef.current = true;
         setBlocks(p.blocks);
+        blocksRef.current = p.blocks;
         lastSavedBlocksRef.current = p.blocks;
       }
       await api.writeNote(p.title, serializeMarkdown(p.blocks));
@@ -281,6 +309,7 @@ export function App() {
         const parsed = parseMarkdown(p.content);
         skipAutosaveRef.current = true;
         setBlocks(parsed);
+        blocksRef.current = parsed;
         lastSavedBlocksRef.current = parsed;
       }
     }
@@ -318,6 +347,7 @@ export function App() {
     if (!currentTitle) return;
     await api.deleteNote(currentTitle);
     setCurrentTitle(null);
+    titleRef.current = null;
     setBlocks([]);
     setBacklinks([]);
     await refreshList();
@@ -335,8 +365,13 @@ export function App() {
       return;
     }
     try {
+      await flushSave();
       await api.renameNote(currentTitle, titleDraft.trim());
       setCurrentTitle(titleDraft.trim());
+      titleRef.current = titleDraft.trim();
+      // Rename rewrites favorites.json on disk; resync so the next toggle
+      // doesn't write the stale list (with the old title) back.
+      api.getFavorites().then(setFavoritesState).catch(() => {});
       await refreshList();
     } catch (e) {
       console.error("rename failed", e);
@@ -367,24 +402,32 @@ export function App() {
   useEffect(() => {
     if (!currentTitle) return;
     if (skipAutosaveRef.current) { skipAutosaveRef.current = false; return; }
-    const title = currentTitle;
-    const t = setTimeout(() => {
-      const next = serializeMarkdown(blocks);
-      const prev = serializeMarkdown(lastSavedBlocksRef.current);
-      if (next === prev) return;
-      pushUndo({ label: `edit in ${title}`, payload: { kind: "editor", title, blocks: lastSavedBlocksRef.current } });
-      lastSavedBlocksRef.current = blocks;
-      api.writeNote(title, next).then(refreshList);
-    }, 400);
+    const t = setTimeout(() => { void flushSave().then(refreshList); }, 400);
     return () => clearTimeout(t);
-  }, [blocks, currentTitle, refreshList]);
+  }, [blocks, currentTitle, refreshList, flushSave]);
 
   // ── workflows ─────────────────────────────────────────────────────────────
 
   const workflowCtx: WorkflowContext = useMemo(() => ({
     listNotes: api.listNotes,
     readNote: async (t) => (await api.readNote(t)).content,
-    writeNote: api.writeNote,
+    // Workflow writes are undoable (⌘Z) like Open-view edits, and a write
+    // to the note in the editor reloads it so a later autosave can't
+    // clobber the workflow's change with stale blocks.
+    writeNote: async (t, content) => {
+      const { content: before } = await api.readNote(t);
+      if (before === content) return;
+      if (before) pushUndo({ label: `workflow in ${t}`, payload: { kind: "disk", title: t, content: before } });
+      await api.writeNote(t, content);
+      if (titleRef.current === t) {
+        const parsed = parseMarkdown(content);
+        const next = parsed.length > 0 ? parsed : [newBlock()];
+        skipAutosaveRef.current = true;
+        setBlocks(next);
+        blocksRef.current = next;
+        lastSavedBlocksRef.current = next;
+      }
+    },
     openNote,
     now: () => new Date(),
   }), [openNote]);
@@ -392,12 +435,14 @@ export function App() {
   const runWorkflow = useCallback(async (w: Workflow) => {
     setShowPalette(false);
     try {
+      await flushSave();
       const res = await w.run(workflowCtx);
       setStatusMessage(res.message);
     } catch (e) {
       setStatusMessage(`Workflow failed: ${String(e)}`);
     }
-  }, [workflowCtx]);
+    await refreshList();
+  }, [workflowCtx, flushSave, refreshList]);
 
   useEffect(() => {
     if (!statusMessage) return;

@@ -151,3 +151,78 @@ export function formatWeekRange(id: string): string {
   if (sm === em) return `${sm} ${sd} – ${ed}`;
   return `${sm} ${sd} – ${em} ${ed}`;
 }
+
+const isOpenUncarried = (b: Block): boolean =>
+  b.state !== null && !TERMINAL_STATES.has(b.state) && !b.properties.carried;
+
+function markSubtree(list: Block[], shouldMark: (b: Block) => boolean): Block[] {
+  return list.map((b) => {
+    // A terminal parent is pruned with its subtree by carryOverWeek, so
+    // nothing beneath it was carried — leave it untouched.
+    if (TERMINAL_STATES.has(b.state)) return b;
+    const mark = isOpenUncarried(b) && shouldMark(b);
+    return {
+      ...b,
+      properties: mark ? { ...b.properties, carried: "1" } : b.properties,
+      children: markSubtree(b.children, shouldMark),
+    };
+  });
+}
+
+/**
+ * After `carryOverWeek(prev)` has copied a week forward, mark the open
+ * items left behind in `prev` as `carried:: 1` so each todo shows up once
+ * in the Open view instead of once per week it has lived through.
+ *
+ * Mirrors carryOverWeek's walk exactly: the Dailies subtree is reset (not
+ * carried), and terminal blocks take their subtree with them, so open
+ * items in either place are left alone. `shouldMark` narrows further.
+ */
+export function markCarriedOver(
+  prev: Block[],
+  shouldMark: (b: Block) => boolean = () => true,
+): Block[] {
+  let sawDailies = false;
+  return prev.map((b) => {
+    if (!sawDailies && b.text === DAILIES_BLOCK_TITLE) {
+      sawDailies = true;
+      return b;
+    }
+    return markSubtree([b], shouldMark)[0];
+  });
+}
+
+function collectStatefulTexts(blocks: Block[], into: Set<string>): void {
+  for (const b of blocks) {
+    if (b.state !== null) into.add(b.text.trim());
+    collectStatefulTexts(b.children, into);
+  }
+}
+
+/**
+ * Backfill for weeks created before `markCarriedOver` existed. Given week
+ * notes in chronological order, mark an open item in a past week as
+ * carried only when a stateful block with the same text exists in some
+ * later week — evidence that it really was carried forward. The latest
+ * week is never touched. Returns only the weeks that changed.
+ */
+export function pruneCarriedWeeks(
+  weeks: { title: string; blocks: Block[] }[],
+): { title: string; blocks: Block[]; marked: number }[] {
+  const changed: { title: string; blocks: Block[]; marked: number }[] = [];
+  const later = new Set<string>();
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const w = weeks[i];
+    if (i < weeks.length - 1) {
+      let marked = 0;
+      const next = markCarriedOver(w.blocks, (b) => {
+        const hit = later.has(b.text.trim());
+        if (hit) marked++;
+        return hit;
+      });
+      if (marked > 0) changed.push({ title: w.title, blocks: next, marked });
+    }
+    collectStatefulTexts(w.blocks, later);
+  }
+  return changed.reverse();
+}

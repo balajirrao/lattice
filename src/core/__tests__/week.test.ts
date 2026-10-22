@@ -3,6 +3,8 @@ import {
   WEEKDAY_NAMES,
   carryOverWeek,
   dailiesTemplate,
+  markCarriedOver,
+  pruneCarriedWeeks,
   formatWeekRange,
   isWeeklyTitle,
   mostRecentPrevWeek,
@@ -198,5 +200,112 @@ describe("carryOverWeek", () => {
     const out = carryOverWeek(parseMarkdown(md));
     const expected = "-Dailies\n  -Mon\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n-TODO live\n";
     expect(serializeMarkdown(out)).toBe(expected);
+  });
+});
+
+const DAILIES =
+  "-Dailies\n  -Mon\n    -TODO daily task\n  -Tue\n  -Wed\n  -Thu\n  -Fri\n  -Sat\n  -Sun\n";
+
+const carriedTexts = (blocks: ReturnType<typeof parseMarkdown>): string[] => {
+  const out: string[] = [];
+  const walk = (list: typeof blocks) => {
+    for (const b of list) {
+      if (b.properties.carried) out.push(b.text);
+      walk(b.children);
+    }
+  };
+  walk(blocks);
+  return out;
+};
+
+describe("markCarriedOver", () => {
+  it("marks open items that carryOverWeek copies forward", () => {
+    const md = DAILIES + "-TODO a\n-WAITING b\n-Project\n  -DOING c\n";
+    const out = markCarriedOver(parseMarkdown(md));
+    expect(carriedTexts(out)).toEqual(["a", "b", "c"]);
+  });
+
+  it("leaves Dailies todos alone (Dailies are reset, not carried)", () => {
+    const out = markCarriedOver(parseMarkdown(DAILIES + "-TODO a\n"));
+    expect(carriedTexts(out)).toEqual(["a"]);
+  });
+
+  it("leaves open children of a terminal parent alone (pruned, not carried)", () => {
+    const md = DAILIES + "-DONE parent\n  -TODO orphan\n";
+    const out = markCarriedOver(parseMarkdown(md));
+    expect(carriedTexts(out)).toEqual([]);
+  });
+
+  it("does not mark stateless or terminal blocks", () => {
+    const md = DAILIES + "-plain\n-DONE d\n-REMEMBER r\n";
+    expect(carriedTexts(markCarriedOver(parseMarkdown(md)))).toEqual([]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = parseMarkdown(DAILIES + "-TODO a\n");
+    const before = serializeMarkdown(input);
+    markCarriedOver(input);
+    expect(serializeMarkdown(input)).toBe(before);
+  });
+
+  it("round-trips the carried flag through markdown", () => {
+    const out = markCarriedOver(parseMarkdown(DAILIES + "-TODO a\n"));
+    expect(carriedTexts(parseMarkdown(serializeMarkdown(out)))).toEqual(["a"]);
+  });
+});
+
+describe("pruneCarriedWeeks", () => {
+  const week = (title: string, body: string) => ({
+    title,
+    blocks: parseMarkdown(DAILIES + body),
+  });
+
+  it("marks past-week items that reappear in a later week", () => {
+    const res = pruneCarriedWeeks([
+      week("weekly/2026-W40", "-TODO shared\n-TODO only-here\n"),
+      week("weekly/2026-W41", "-TODO shared\n"),
+    ]);
+    expect(res).toHaveLength(1);
+    expect(res[0].title).toBe("weekly/2026-W40");
+    expect(res[0].marked).toBe(1);
+    expect(carriedTexts(res[0].blocks)).toEqual(["shared"]);
+  });
+
+  it("counts a later DONE copy as evidence it was carried", () => {
+    const res = pruneCarriedWeeks([
+      week("weekly/2026-W40", "-TODO x\n"),
+      week("weekly/2026-W41", "-DONE x\n"),
+    ]);
+    expect(carriedTexts(res[0].blocks)).toEqual(["x"]);
+  });
+
+  it("never touches the latest week", () => {
+    const res = pruneCarriedWeeks([
+      week("weekly/2026-W40", "-TODO x\n"),
+      week("weekly/2026-W41", "-TODO x\n"),
+    ]);
+    expect(res.map((r) => r.title)).toEqual(["weekly/2026-W40"]);
+  });
+
+  it("is idempotent", () => {
+    const weeks = [
+      week("weekly/2026-W40", "-TODO x\n"),
+      week("weekly/2026-W41", "-TODO x\n"),
+    ];
+    const first = pruneCarriedWeeks(weeks);
+    const again = pruneCarriedWeeks([
+      { title: weeks[0].title, blocks: first[0].blocks },
+      weeks[1],
+    ]);
+    expect(again).toEqual([]);
+  });
+
+  it("propagates across a chain of weeks", () => {
+    const res = pruneCarriedWeeks([
+      week("weekly/2026-W39", "-TODO x\n"),
+      week("weekly/2026-W40", "-TODO x\n"),
+      week("weekly/2026-W41", "-TODO x\n"),
+    ]);
+    expect(res.map((r) => r.title)).toEqual(["weekly/2026-W39", "weekly/2026-W40"]);
   });
 });
